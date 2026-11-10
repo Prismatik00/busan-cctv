@@ -115,14 +115,14 @@
 <script>
 const API = 'https://its.busan.go.kr/api-n/v1/bsits/user/cctvs';
 const KEY = 'busan-cctv-selected';
-let all = [];                 // 전체 CCTV 목록
-let selected = load();        // 선택된 cctvId 순서 배열
-const players = new Map();    // cctvId -> {hls, video, el}
-
 // 처음 여는 기기에서 보여줄 기본 구성 (모아보기 순서)
 const DEFAULT_SELECTED = ['CTV0000137','CTV0000519','CTV0000521','CTV0000525','CTV0000702','CTV0000706',
   'CTV0000003','CTV0000051','CTV0000050','CTV0000052','CTV0000138','CTV0000034'];
 const DEFAULT_COLS = '3';
+let all = [];                 // 전체 CCTV 목록
+let selected = load();        // 선택된 cctvId 순서 배열
+const players = new Map();    // cctvId -> {hls, video, el}
+
 function load(){
   try { const v = localStorage.getItem(KEY); return v === null ? DEFAULT_SELECTED.slice() : (JSON.parse(v) || []); }
   catch(e){ return DEFAULT_SELECTED.slice(); }
