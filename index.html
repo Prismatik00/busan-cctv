@@ -70,7 +70,8 @@
   /* 카드: 영상 영역은 남는 공간에 맞춰 줄어들며 가장자리를 잘라 채우고(cover), 아래 이름·버튼 줄은 항상 그대로 */
   .tile { background:#000; border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative;
     display:flex; flex-direction:column; min-height:0; }
-  .tile video { width:100%; aspect-ratio:4/3; flex:1 1 auto; min-height:60px; height:auto; display:block; background:#000; object-fit:cover; }
+  /* 부산 CCTV는 대부분 16:9 화면을 4:3·3:2(320x240, 720x480 등)로 눌러 보내므로 16:9로 펼쳐서 보여줌 */
+  .tile video { width:100%; aspect-ratio:16/9; flex:none; height:auto; display:block; background:#000; object-fit:fill; }
   .tile .bar { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--panel); font-size:13px; }
   .tile .bar span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tile .bar button { flex:none; padding:4px 8px; font-size:12px; }
@@ -79,8 +80,9 @@
   .empty { color:var(--muted); font-size:14px; padding:40px; text-align:center; grid-column:1/-1; }
   .tile.dragging { opacity:.4; }
   .tile video { cursor:zoom-in; }
-  .tile.big { position:fixed; inset:4vh 4vw; z-index:1500; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.6); }
-  .tile.big video { flex:1; aspect-ratio:auto; height:0; min-height:0; cursor:zoom-out; object-fit:contain; }
+  .tile.big { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:1500; display:flex; flex-direction:column;
+    width:min(92vw, calc((92vh - 44px) * 16 / 9)); box-shadow:0 10px 40px rgba(0,0,0,.6); }
+  .tile.big video { cursor:zoom-out; }
   .tile.big .bar { font-size:15px; }
   #backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:1400; }
   #backdrop.show { display:block; }
@@ -90,7 +92,7 @@
   .navbtn.show { display:block; }
   #navPrev { left:max(4px, calc(4vw - 56px)); }
   #navNext { right:max(4px, calc(4vw - 56px)); }
-  #navCount { display:none; position:fixed; top:calc(4vh - 30px); left:50%; transform:translateX(-50%); z-index:1600; color:#fff; font-size:13px; background:rgba(20,22,30,.7); padding:3px 10px; border-radius:10px; }
+  #navCount { display:none; position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:1600; color:#fff; font-size:13px; background:rgba(20,22,30,.7); padding:3px 10px; border-radius:10px; }
   #navCount.show { display:block; }
   #toast { z-index:3000; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#222838; padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
   @media (max-width:760px){
@@ -493,7 +495,7 @@ function captureAll(){
   const list = selected.map(id=>players.get(id)).filter(Boolean);
   if (!list.length) { toast('선택된 CCTV가 없어요.'); return; }
   const cols = Math.min(+$('#cols').value, list.length), rows = Math.ceil(list.length/cols);
-  const w=320*SCALE, h=240*SCALE, gap=8;
+  const w=320*SCALE, h=180*SCALE, gap=8; // 16:9
   const cv=document.createElement('canvas'); cv.width=cols*w+(cols-1)*gap; cv.height=rows*h+(rows-1)*gap;
   const ctx=cv.getContext('2d'); ctx.fillStyle='#111'; ctx.fillRect(0,0,cv.width,cv.height);
   try {
