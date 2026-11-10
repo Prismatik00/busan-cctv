@@ -158,6 +158,10 @@
   .tile .bar span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tile .bar button { flex:none; padding:4px 8px; font-size:12px; }
   .tile .bar span { min-width:0; }
+  .tile .bar span.nm { cursor:pointer; }
+  .tile .bar span.nm:hover { text-decoration:underline; color:#9ec1ff; }
+  .focus-ring { animation:focusPulse 1.2s ease-out 3; }
+  @keyframes focusPulse { 0% { stroke-opacity:1; stroke-width:4; } 100% { stroke-opacity:0; stroke-width:14; } }
   .tile .msg { position:absolute; inset:0 0 34px 0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; pointer-events:none; }
   .empty { color:var(--muted); font-size:14px; padding:40px; text-align:center; grid-column:1/-1; }
   .tile.dragging { opacity:.4; }
@@ -813,7 +817,7 @@ function renderGrid(){
 function makeTile(c){
   const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
-    <div class="bar"><span title="${c.instlAddr||''}">${c.instlPos}</span>
+    <div class="bar"><span class="nm" title="눌러서 지도에서 위치 보기${c.instlAddr ? ' · '+c.instlAddr : ''}">${c.instlPos}</span>
     ${naverBtn(c)}<button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
@@ -844,6 +848,7 @@ function makeTile(c){
   video.addEventListener('playing', () => msg.style.display='none');
   video.addEventListener('click', () => el.classList.contains('big') ? closeBig() : openBig(el));
   el.querySelector('.bar').addEventListener('click', e => {
+    if (e.target.classList.contains('nm')) { focusOnMap(c); return; } // 이름 누르면 지도에서 위치 보기
     const act = e.target.dataset.act;
     if (act==='reload') start();
     if (act==='del') { closeBig(); selected = selected.filter(x=>x!==c.cctvId); save(); renderGrid(); renderList(); }
@@ -883,7 +888,7 @@ function openPreviewBig(c){
   closeBig();
   const el = document.createElement('div'); el.className = 'tile big temp';
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
-    <div class="bar"><span>${c.instlPos}</span>${naverBtn(c)}<button class="primary" data-act="add">+ 모아보기에 추가</button><button data-act="close" title="닫기">✕</button></div>`;
+    <div class="bar"><span class="nm" title="눌러서 지도에서 위치 보기">${c.instlPos}</span>${naverBtn(c)}<button class="primary" data-act="add">+ 모아보기에 추가</button><button data-act="close" title="닫기">✕</button></div>`;
   document.body.appendChild(el);
   const v = el.querySelector('video'), msg = el.querySelector('.msg');
   v.addEventListener('playing', () => msg.style.display='none');
@@ -893,6 +898,7 @@ function openPreviewBig(c){
   else v.src = c.hlsAddr;
   v.play().catch(()=>{});
   el.querySelector('.bar').addEventListener('click', e => {
+    if (e.target.classList.contains('nm')) { focusOnMap(c); return; }
     const a = e.target.dataset.act;
     if (a === 'close') closeBig();
     if (a === 'add') { closeBig(); if (!selected.includes(c.cctvId)) toggle(c.cctvId); const p = players.get(c.cctvId); if (p) openBig(p.el); }
@@ -1294,6 +1300,18 @@ $('#rbApply').addEventListener('click', async () => {
   closeBig(); selected = ids; save(); renderGrid(); renderList();
   toast(`경로 CCTV ${ids.length}개를 넣었어요 · "설정 저장"으로 이름 붙여 두세요`);
 });
+
+// ---------- 영상 아래 이름을 누르면 왼쪽 지도가 그 위치로 이동 ----------
+function focusOnMap(c){
+  if (!map || !c || !c.lat) return;
+  closeBig(); closePreview(); showTab('map');
+  map.setView([c.lat, c.lot], Math.max(map.getZoom(), 15), { animate:true });
+  if (innerWidth <= 760) $('#map').scrollIntoView({ behavior:'smooth', block:'start' }); // 휴대폰: 지도가 위에 있으니 위로 스크롤
+  // 위치를 알아보기 쉽게 잠깐 깜빡이는 표시
+  const ring = L.circleMarker([c.lat, c.lot], { radius:16, color:'#ffd43b', weight:4, fill:false, interactive:false, className:'focus-ring' }).addTo(map);
+  setTimeout(() => map.removeLayer(ring), 3800);
+  const m = markers.get(c.cctvId); if (m) m.bringToFront();
+}
 
 init();
 </script>
