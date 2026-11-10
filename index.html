@@ -19,6 +19,7 @@
   #map.show { display:block; }
   #list.hide { display:none; }
   .leaflet-tooltip { font-size:12px; }
+  .nat-hint { background:rgba(23,26,33,.85); color:#fff; font-size:11px; padding:5px 8px; border-radius:6px; }
   .pv { position:fixed; z-index:1300; width:260px; background:#171a21; color:#e7e9ee; border:1px solid #2c3240; border-radius:10px; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,.5); cursor:pointer; }
   .pv-x { float:right; color:#aaa; padding:0 4px; cursor:pointer; }
   .pv-name { font-size:13px; font-weight:600; margin:0 2px 6px 2px; }
@@ -145,6 +146,7 @@
     </span>
     <button id="presetSave">설정 저장</button>
     <button id="presetQR" title="지금 설정을 QR·링크로 다른 기기에 보내기">QR 만들기</button>
+    <button id="itsKey" title="고속도로·국도 CCTV용 국가교통정보센터 인증키">인증키 입력</button>
     <label>열 <select id="cols"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
     <button class="primary" id="capAll">전체 캡처</button>
     <button id="clear">모두 비우기</button>
@@ -162,6 +164,7 @@
   <p id="qrTitle"></p>
   <div id="qrImg"></div>
   <p class="hint" style="margin:8px 0 0">휴대폰 카메라로 찍으면 이 설정이 그 기기에 추가돼요.</p>
+  <label id="qrKeyWrap" style="display:block;font-size:12px;margin-top:8px;color:#ffb35c"><input type="checkbox" id="qrKey" checked> 인증키도 같이 보내기 (내 기기에만 쓰세요)</label>
   <input id="qrLink" type="text" readonly>
   <div class="btns"><button class="primary" id="qrCopy">링크 복사</button><button id="qrClose">닫기</button></div>
 </div></div>
@@ -195,12 +198,75 @@ function load(){
   try { const v = localStorage.getItem(KEY); return v === null ? DEFAULT_SELECTED.slice() : (JSON.parse(v) || []); }
   catch(e){ return DEFAULT_SELECTED.slice(); }
 }
-function save(){ try { localStorage.setItem(KEY, JSON.stringify(selected)); } catch(e){} }
+function save(){
+  try {
+    localStorage.setItem(KEY, JSON.stringify(selected));
+    // 고속도로·국도 CCTV는 이름·위치를 같이 저장해 두었다가 다음에 바로 보여줌
+    const meta = {}; selected.filter(isNat).forEach(id => { const c = nat.get(id); if (c) meta[id] = { instlPos:c.instlPos, instlAddr:c.instlAddr, lat:c.lat, lot:c.lot, src:c.src }; });
+    localStorage.setItem(KEY+'-nat', JSON.stringify(meta));
+  } catch(e){}
+}
+// ---------- 전국 고속도로·국도 CCTV (국가교통정보센터 오픈API) ----------
+// 인증키는 코드에 넣지 않고, 각 기기 브라우저에만 저장 (공개 페이지라서)
+let ITS_KEY = ''; try { ITS_KEY = localStorage.getItem(KEY+'-itskey') || ''; } catch(e){}
+let natReload = () => {};
+async function setItsKey(k){
+  k = (k||'').trim(); if (!k) return false;
+  // 키가 맞는지 작은 범위로 한 번 확인
+  const u = `${ITS_API}?apiKey=${encodeURIComponent(k)}&type=ex&cctvType=1&minX=129&maxX=129.1&minY=35.2&maxY=35.3&getType=json`;
+  let ok = false; try { const j = await fetch(u).then(r => r.json()); ok = !!(j && j.response && Array.isArray(j.response.data)); } catch(e){}
+  if (!ok) return false;
+  ITS_KEY = k; try { localStorage.setItem(KEY+'-itskey', k); } catch(e){}
+  updateKeyBtn(); natReload();
+  players.forEach(p => { if (p.c.src && !p.c.hlsAddr) p.start(); }); // 키 없어서 멈춰 있던 화면 다시 연결
+  return true;
+}
+async function askItsKey(){
+  const k = await dialog({ title:'국가교통정보센터 인증키를 넣어 주세요. 이 기기에만 저장돼요.', value:ITS_KEY, okText:'저장',
+    check: v => v && !/^[0-9a-f]{32}$/i.test(v) ? '보통 영문·숫자 32자예요.' : '' });
+  if (!k) return;
+  toast('인증키 확인 중…');
+  if (await setItsKey(k)) toast('인증키 저장됨 · 고속도로·국도 CCTV를 불러와요');
+  else toast('인증키를 확인하지 못했어요. 다시 확인해 주세요.');
+}
+function updateKeyBtn(){ const b = $('#itsKey'); if (b) { b.textContent = ITS_KEY ? '인증키 ✓' : '인증키 입력'; b.classList.toggle('primary', !ITS_KEY); } }
+const ITS_API = 'https://openapi.its.go.kr:9443/cctvInfo';
+const nat = new Map();   // id -> CCTV
+let natMeta = {}; try { natMeta = JSON.parse(localStorage.getItem(KEY+'-nat')) || {}; } catch(e){}
+const isNat = id => /^[ei]\d+_\d+$/.test(id);
+const natId = (t,x,y) => (t==='ex'?'e':'i') + Math.round(x*1e5) + '_' + Math.round(y*1e5);
+function natItem(t, d){
+  const x = +d.coordx, y = +d.coordy;
+  return { cctvId:natId(t,x,y), instlPos:String(d.cctvname||'').trim(), instlAddr:t==='ex'?'고속도로':'국도',
+           lat:y, lot:x, hlsAddr:String(d.cctvurl||'').replace(/^http:/,'https:'), src:t };
+}
+async function fetchNat(t, minX, maxX, minY, maxY){
+  if (!ITS_KEY) throw new Error('no key');
+  const u = `${ITS_API}?apiKey=${ITS_KEY}&type=${t}&cctvType=1&minX=${minX}&maxX=${maxX}&minY=${minY}&maxY=${maxY}&getType=json`;
+  const j = await fetch(u).then(r => r.json());
+  return ((j.response && j.response.data) || []).filter(d => d.cctvurl && d.coordx && d.coordy).map(d => natItem(t, d));
+}
+function ensureNat(id){ // 아직 지도에서 안 불러온 고속도로·국도 CCTV는 저장된 정보로 자리만 만들어 둠
+  if (nat.has(id)) return nat.get(id);
+  const m = id.match(/^([ei])(\d+)_(\d+)$/); if (!m) return undefined;
+  const meta = natMeta[id] || {};
+  const c = { cctvId:id, instlPos:meta.instlPos || '고속도로·국도 CCTV', instlAddr:meta.instlAddr || (m[1]==='e'?'고속도로':'국도'),
+              lat:+m[3]/1e5, lot:+m[2]/1e5, hlsAddr:'', src:m[1]==='e'?'ex':'its' };
+  nat.set(id, c); return c;
+}
+async function resolveNat(id){ // 영상 주소(토큰 포함)를 새로 받아 옴
+  const c = ensureNat(id); if (!c) return null;
+  const d = 0.0005, list = await fetchNat(c.src, c.lot-d, c.lot+d, c.lat-d, c.lat+d);
+  let best = list.find(x => x.cctvId === id);
+  if (!best && list.length) best = list.sort((a,b)=>Math.hypot(a.lot-c.lot,a.lat-c.lat)-Math.hypot(b.lot-c.lot,b.lat-c.lat))[0];
+  if (best) { Object.assign(c, { instlPos:best.instlPos, hlsAddr:best.hlsAddr }); }
+  return c;
+}
 const $ = s => document.querySelector(s);
 function toast(t){ const el=$('#toast'); el.textContent=t; el.style.opacity=1; clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.opacity=0,2200); }
 function stamp(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
 function stampText(){ return new Date().toLocaleString('ko-KR'); }
-const byId = id => all.find(c => c.cctvId === id);
+const byId = id => all.find(c => c.cctvId === id) || nat.get(id) || (isNat(id) ? ensureNat(id) : undefined);
 
 async function init(){
   try {
@@ -212,7 +278,7 @@ async function init(){
     $('#count').textContent = 'CCTV 목록을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.';
     return;
   }
-  selected = selected.filter(id => byId(id));
+  selected = selected.filter(id => isNat(id) || byId(id));
   initMap();
   renderList(); renderGrid();
   importFromUrl();
@@ -220,9 +286,10 @@ async function init(){
 
 // ---------- 지도 ----------
 let map = null; const markers = new Map();
-function markerStyle(on){
+const SRC_COLOR = { busan:'#3d7bfd', ex:'#f08c00', its:'#2f9e44' };
+function markerStyle(on, src){
   return on ? { radius:9, color:'#fff', weight:2, fillColor:'#ff4d4f', fillOpacity:1 }
-            : { radius:6, color:'#fff', weight:1, fillColor:'#3d7bfd', fillOpacity:.9 };
+            : { radius:src ? 5 : 6, color:'#fff', weight:1, fillColor:SRC_COLOR[src||'busan'], fillOpacity:.9 };
 }
 function initMap(){
   if (!window.L) { $('#map').innerHTML='<p class="hint" style="padding:12px">지도를 불러오지 못했어요. 목록 탭을 이용해 주세요.</p>'; return; }
@@ -250,23 +317,46 @@ function initMap(){
   }).addTo(map);
   map.on('zoomend', () => { const l = trafficLayerFor(map.getZoom()); if (traffic.wmsParams.layers !== l) traffic.setParams({ layers:l }); });
   setInterval(() => traffic.setParams({ trafficVersion:Date.now() }), 3*60000); // 3분마다 갱신
-  L.control.layers({ '일반 지도':street2, '일반 지도 (예비)':street, '위성':sat }, { '소통정보':traffic }, { position:'topright' }).addTo(map);
+  const layersCtl = L.control.layers({ '일반 지도':street2, '일반 지도 (예비)':street, '위성':sat }, { '소통정보':traffic }, { position:'topright' }).addTo(map);
   const legend = L.control({ position:'bottomright' });
   legend.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText='background:rgba(255,255,255,.9);color:#222;padding:6px 8px;border-radius:6px;font-size:11px;line-height:1.6';
-    d.innerHTML = '<b>소통정보</b><br><span style="color:#1aa260">●</span> 25km/h 이상<br><span style="color:#f5a000">●</span> 15~25km/h<br><span style="color:#e03030">●</span> 15km/h 미만'; return d; };
+    d.innerHTML = '<b>CCTV</b><br><span style="color:#3d7bfd">●</span> 부산시 <span style="color:#f08c00">●</span> 고속도로 <span style="color:#2f9e44">●</span> 국도<br><b>소통정보</b> (부산)<br><span style="color:#1aa260">●</span> 25km/h 이상<br><span style="color:#f5a000">●</span> 15~25km/h<br><span style="color:#e03030">●</span> 15km/h 미만'; return d; };
   legend.addTo(map);
-  all.forEach(c => {
-    if (!c.lat || !c.lot) return;
-    const m = L.circleMarker([c.lat, c.lot], { ...markerStyle(selected.includes(c.cctvId)), bubblingMouseEvents:false }).addTo(map);
-    // PC: 올리면 미리보기, 클릭하면 추가/빼기 · 휴대폰: 누르면 미리보기, 미리보기를 누르면 추가/빼기
-    m.on('mouseover', e => { if (!isTouch(e)) openPreview(c, m); });
-    m.on('mouseout', e => { if (!isTouch(e)) schedulePreviewClose(); });
-    m.on('click', e => {
-      if (isTouch(e)) { if (preview.id === c.cctvId) toggle(c.cctvId); else openPreview(c, m); }
-      else toggle(c.cctvId);
-    });
-    markers.set(c.cctvId, m);
-  });
+  const busanLayer = L.layerGroup().addTo(map), natLayer = L.layerGroup().addTo(map);
+  all.forEach(c => { if (c.lat && c.lot) addMarker(c, busanLayer); });
+  layersCtl.addOverlay(busanLayer, '<span style="color:#3d7bfd">●</span> 부산시 CCTV');
+  layersCtl.addOverlay(natLayer, '<span style="color:#f08c00">●</span> 고속도로 · <span style="color:#2f9e44">●</span> 국도 CCTV');
+  // 고속도로·국도 CCTV는 지금 보고 있는 지역만 불러옴 (전국은 1만 개가 넘어서)
+  const loaded = new Set(), G = 0.5;
+  const hint = L.control({ position:'topright' });
+  hint.onAdd = () => {
+    const d = L.DomUtil.create('div','nat-hint');
+    if (!ITS_KEY) { d.innerHTML = '인증키를 넣으면 고속도로·국도 CCTV가 보여요 <button>입력</button>'; d.querySelector('button').onclick = askItsKey; }
+    else d.textContent = '조금 더 확대하면 고속도로·국도 CCTV가 보여요';
+    L.DomEvent.disableClickPropagation(d); return d;
+  };
+  function loadNatView(){
+    if (!map.hasLayer(natLayer)) { hint.remove(); return; }
+    if (!ITS_KEY) { hint.remove(); hint.addTo(map); return; }
+    if (map.getZoom() < 10) { hint.addTo(map); return; }
+    hint.remove();
+    const b = map.getBounds();
+    for (let gx = Math.floor(b.getWest()/G); gx <= Math.floor(b.getEast()/G); gx++)
+      for (let gy = Math.floor(b.getSouth()/G); gy <= Math.floor(b.getNorth()/G); gy++) {
+        const k = gx+'_'+gy; if (loaded.has(k)) continue; loaded.add(k);
+        ['ex','its'].forEach(t => fetchNat(t, gx*G, (gx+1)*G, gy*G, (gy+1)*G)
+          .then(list => list.forEach(it => {
+            const c = nat.get(it.cctvId);
+            if (c) Object.assign(c, it); else nat.set(it.cctvId, it);
+            if (!markers.has(it.cctvId)) addMarker(nat.get(it.cctvId), natLayer);
+          }))
+          .catch(() => loaded.delete(k)));
+      }
+  }
+  let natTimer = null;
+  map.on('moveend overlayadd overlayremove', () => { clearTimeout(natTimer); natTimer = setTimeout(loadNatView, 250); });
+  natReload = () => { loaded.clear(); hint.remove(); loadNatView(); };
+  loadNatView();
   map.on('zoomstart movestart', () => { if (!preview.touchOpen) closePreview(); });
   map.on('move zoom', placePreview);
   map.on('click', closePreview); // 휴대폰: 지도 빈 곳을 누르면 미리보기 닫기
@@ -303,7 +393,11 @@ function openPreview(c, m){
   v.addEventListener('playing', () => msg.style.display = 'none');
   if (window.Hls && Hls.isSupported()) {
     preview.hls = new Hls({ liveSyncDurationCount:2 }); preview.hls.loadSource(c.hlsAddr); preview.hls.attachMedia(v);
-    preview.hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) msg.textContent = '영상 신호 없음'; });
+    let retried = false;
+    preview.hls.on(Hls.Events.ERROR, async (_,d) => { if (!d.fatal) return;
+      if (c.src && !retried) { retried = true; msg.textContent = '다시 연결 중…';   // 고속도로·국도: 주소 새로 받아 한 번 더
+        try { await resolveNat(c.cctvId); if (preview.id === c.cctvId && preview.hls) { preview.hls.loadSource(c.hlsAddr); return; } } catch(e){} }
+      msg.textContent = '영상 신호 없음'; });
   } else v.src = c.hlsAddr;
   v.play().catch(()=>{});
   el.addEventListener('mouseenter', () => clearTimeout(preview.timer));
@@ -327,8 +421,21 @@ function closePreview(){
   if (preview.el) preview.el.remove();
   Object.assign(preview, { id:null, el:null, m:null });
 }
+function addMarker(c, layer){
+  const m = L.circleMarker([c.lat, c.lot], { ...markerStyle(selected.includes(c.cctvId), c.src), bubblingMouseEvents:false }).addTo(layer);
+  m._src = c.src;
+  // PC: 올리면 미리보기, 클릭하면 추가/빼기 · 휴대폰: 누르면 미리보기, 미리보기를 누르면 추가/빼기
+  m.on('mouseover', e => { if (!isTouch(e)) openPreview(c, m); });
+  m.on('mouseout', e => { if (!isTouch(e)) schedulePreviewClose(); });
+  m.on('click', e => {
+    if (isTouch(e)) { if (preview.id === c.cctvId) toggle(c.cctvId); else openPreview(c, m); }
+    else toggle(c.cctvId);
+  });
+  markers.set(c.cctvId, m);
+  return m;
+}
 function refreshMarkers(){
-  for (const [id,m] of markers) { const on = selected.includes(id); m.setStyle(markerStyle(on)); if (on) m.bringToFront(); }
+  for (const [id,m] of markers) { const on = selected.includes(id); m.setStyle(markerStyle(on, m._src)); if (on) m.bringToFront(); }
 }
 function toggle(id){
   const c = byId(id);
@@ -355,7 +462,7 @@ try { if (localStorage.getItem(KEY+'-wide')) setTimeout(()=>setWide(true), 0); }
 $('#q').addEventListener('input', () => {
   const q = $('#q').value.trim().toLowerCase(); if (!q) return;
   showTab('list');
-  if (map) { const hits = all.filter(c => (c.instlPos+' '+c.instlAddr).toLowerCase().includes(q) && c.lat);
+  if (map) { const hits = all.concat([...nat.values()]).filter(c => (c.instlPos+' '+c.instlAddr).toLowerCase().includes(q) && c.lat);
     if (hits.length) map.fitBounds(L.latLngBounds(hits.map(c=>[c.lat,c.lot])).pad(0.3), { maxZoom:16 }); }
 });
 
@@ -377,7 +484,8 @@ function renderList(){
   const match = c => !q || (c.instlPos+' '+c.instlAddr).toLowerCase().includes(q);
   // 선택한 CCTV는 모아보기와 같은 순서로 위에, 나머지는 가나다순으로 아래에
   const sel = selected.map(byId).filter(c => c && match(c));
-  const rest = all.filter(c => !selected.includes(c.cctvId) && match(c));
+  const pool = q ? all.concat([...nat.values()].filter(c => c.hlsAddr)) : all; // 검색할 땐 지도에서 불러온 고속도로·국도 CCTV도 포함
+  const rest = pool.filter(c => !selected.includes(c.cctvId) && match(c));
   const row = (c, isSel) => `
     <div class="item${isSel?' sel':''}" ${isSel?`data-sel="${c.cctvId}"`:''}>
       ${isSel?`<span class="num">${selected.indexOf(c.cctvId)+1}</span>`:''}
@@ -501,19 +609,30 @@ function makeTile(c){
     <button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
-  const start = () => {
-    p.hls && p.hls.destroy(); msg.textContent='연결 중…'; msg.style.display='flex';
+  const start = async () => {
+    p.hls && p.hls.destroy(); p.hls = null; msg.textContent='연결 중…'; msg.style.display='flex';
+    // 고속도로·국도 CCTV: 영상 주소에 유효시간이 있어서 처음이거나 끊겼으면 새 주소를 받아 옴
+    if (c.src && (!c.hlsAddr || p.failed)) {
+      try { await resolveNat(c.cctvId); el.querySelector('.bar span').textContent = c.instlPos; save(); } catch(e){}
+      if (players.get(c.cctvId) !== p) return;
+    }
+    if (c.src && !ITS_KEY) { msg.textContent='인증키를 넣으면 볼 수 있어요 (위쪽 "인증키 입력")'; return; }
+    if (!c.hlsAddr) { msg.textContent='영상 주소를 받지 못했어요 · 30초 후 재시도'; p.failed = true;
+      clearTimeout(p.retry); p.retry = setTimeout(() => { if (players.get(c.cctvId) === p) start(); }, 30000); return; }
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount:2, manifestLoadingMaxRetry:4, levelLoadingMaxRetry:4, fragLoadingMaxRetry:4 });
       hls.loadSource(c.hlsAddr); hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { p.failed = false; });
       hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) {
-        msg.textContent='영상 신호 없음 · 30초 후 자동 재연결'; msg.style.display='flex';
-        clearTimeout(p.retry); p.retry = setTimeout(() => { if (players.get(c.cctvId) === p) start(); }, 30000);
+        const quick = c.src && !p.failed; p.failed = true;
+        msg.textContent = quick ? '다시 연결 중…' : '영상 신호 없음 · 30초 후 자동 재연결'; msg.style.display='flex';
+        clearTimeout(p.retry); p.retry = setTimeout(() => { if (players.get(c.cctvId) === p) start(); }, quick ? 1500 : 30000);
       } });
       p.hls = hls;
-    } else { video.src = c.hlsAddr; } // Safari 기본 HLS (이 경우 캡처가 막힐 수 있음)
+    } else { video.src = c.hlsAddr; } // Safari 기본 HLS
     video.play().catch(()=>{});
   };
+  p.start = start;
   video.addEventListener('playing', () => msg.style.display='none');
   video.addEventListener('click', () => el.classList.contains('big') ? closeBig() : openBig(el));
   el.querySelector('.bar').addEventListener('click', e => {
@@ -655,7 +774,7 @@ function currentSettings(){
 }
 function applySettings(s){
   closeBig();
-  selected = (s.selected||[]).filter(id => !all.length || byId(id));
+  selected = (s.selected||[]).filter(id => !all.length || isNat(id) || byId(id));
   save();
   $('#cols').value = s.cols || DEFAULT_COLS; setCols();
   setWide(!!s.wide);
@@ -698,27 +817,32 @@ try { renderPresets(localStorage.getItem(KEY+'-preset-cur') || ''); } catch(e){ 
 
 // ---------- QR·링크로 설정 보내기 / 받기 ----------
 // 링크 형식: ...?s=<압축 설정>  (이름|열|위도,경도,줌|CCTV번호.번호.번호…)
-function encodeSettings(name, s){
-  const ids = (s.selected||[]).map(id => String(+id.replace(/\D/g,''))).join('.');
+function encodeSettings(name, s, key){
+  const ids = (s.selected||[]).map(id => isNat(id) ? id : String(+id.replace(/\D/g,''))).join('.');
   const v = s.view ? `${s.view.c[0]},${s.view.c[1]},${s.view.z}` : '';
-  return [name, s.cols||'', v, ids, s.wide?'1':''].map(encodeURIComponent).join('|');
+  return [name, s.cols||'', v, ids, s.wide?'1':'', key||''].map(encodeURIComponent).join('|');
 }
 function decodeSettings(str){
-  const [name, cols, v, ids, wide] = str.split('|').map(decodeURIComponent);
-  const s = { selected:(ids||'').split('.').filter(Boolean).map(n => 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1' };
+  const [name, cols, v, ids, wide, key] = str.split('|').map(decodeURIComponent);
+  const s = { selected:(ids||'').split('.').filter(Boolean).map(n => isNat(n) ? n : 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1' };
   if (v) { const [a,b,z] = v.split(',').map(Number); if (!isNaN(a)&&!isNaN(b)&&!isNaN(z)) s.view = { c:[a,b], z }; }
-  return { name: name || '받은 설정', s };
+  return { name: name || '받은 설정', s, key: key || '' };
 }
-$('#presetQR').addEventListener('click', () => {
+function makeQR(){
   const name = $('#preset').value || '공유 설정';
   const s = currentSettings(); // 지금 화면 그대로 보냄
-  const url = location.origin + location.pathname + '?s=' + encodeSettings(name, s);
+  $('#qrKeyWrap').style.display = ITS_KEY ? 'block' : 'none';
+  const url = location.origin + location.pathname + '?s=' + encodeSettings(name, s, ITS_KEY && $('#qrKey').checked ? ITS_KEY : '');
   $('#qrTitle').textContent = `"${name}" 설정 (${s.selected.length}개 CCTV)`;
   $('#qrLink').value = url;
   if (window.qrcode) { const q = qrcode(0, 'M'); q.addData(url); q.make(); $('#qrImg').innerHTML = q.createSvgTag({ cellSize:4, margin:2, scalable:true }); }
   else $('#qrImg').textContent = 'QR을 만들지 못했어요. 링크를 복사해서 보내 주세요.';
   $('#qrBox').classList.add('show');
-});
+}
+$('#presetQR').addEventListener('click', makeQR);
+$('#qrKey').addEventListener('change', makeQR);
+$('#itsKey').addEventListener('click', askItsKey);
+updateKeyBtn();
 $('#qrCopy').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('#qrLink').value); } catch(e){ $('#qrLink').select(); document.execCommand('copy'); }
   toast('링크를 복사했어요');
@@ -733,6 +857,7 @@ async function importFromUrl(){
   const name = await dialog({ title:`받은 설정(${got.s.selected.length}개 CCTV)을 이 기기에 추가할까요? 이름을 정해 주세요.`, value:got.name, okText:'추가',
     check: v => presets[v] ? `이 기기에 있는 "${v}" 설정을 덮어써요.` : '' });
   if (!name) return;
+  if (got.key && got.key !== ITS_KEY) await setItsKey(got.key); // 같이 온 인증키 저장
   presets[name] = got.s; renderPresets(name); savePresets();
   applySettings(got.s); toast(`"${name}" 추가됨`);
 }
