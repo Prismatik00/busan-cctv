@@ -76,6 +76,21 @@
     box-shadow:0 10px 28px rgba(0,0,0,.55); transform:scale(1.02); cursor:grabbing; }
   .item.ghost .handle { color:#fff; }
   body.dragging-list, body.dragging-list * { cursor:grabbing !important; user-select:none; }
+  #loc { display:none; position:fixed; top:0; bottom:0; z-index:1200; background:var(--panel); border-right:1px solid var(--line);
+    box-shadow:8px 0 24px rgba(0,0,0,.45); flex-direction:column; width:min(480px, calc(100vw - 390px)); }
+  #loc.show { display:flex; }
+  .loc-head { display:flex; align-items:baseline; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); }
+  .loc-head b { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .loc-head small { color:var(--muted); font-size:11px; white-space:nowrap; }
+  .loc-head button { margin-left:auto; flex:none; padding:4px 9px; }
+  .loc-vid { position:relative; background:#000; }
+  .loc-vid video { width:100%; aspect-ratio:16/9; object-fit:fill; display:block; cursor:zoom-in; }
+  #locMsg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; pointer-events:none; }
+  .loc-bar { display:flex; align-items:center; gap:10px; padding:8px 12px; }
+  .loc-bar .hint { margin:0; font-size:11px; }
+  #locAdd.on { background:#2a2f3a; border-color:#3a4050; color:#ffb0b0; }
+  #locMap { flex:1; min-height:200px; }
+  @media (max-width:760px){ #loc { left:0 !important; width:100%; } }
   #subtabs { display:flex; gap:4px; padding:0 14px 6px; }
   #subtabs.hide { display:none; }
   #subtabs button { flex:1; padding:6px; font-size:12px; }
@@ -170,6 +185,12 @@
   <div id="grid"></div>
 </main>
 <div id="toast"></div>
+<div id="loc">
+  <div class="loc-head"><b id="locName"></b><small id="locAddr"></small><button id="locClose" title="닫기">✕</button></div>
+  <div class="loc-vid"><video muted playsinline autoplay></video><span id="locMsg">연결 중…</span></div>
+  <div class="loc-bar"><button id="locAdd" class="primary"></button><span class="hint">지도의 점을 누르면 그 CCTV로 바뀌어요</span></div>
+  <div id="locMap"></div>
+</div>
 <div id="backdrop"></div>
 <button class="navbtn" id="navPrev" title="이전 CCTV (←)">‹</button>
 <button class="navbtn" id="navNext" title="다음 CCTV (→)">›</button>
@@ -457,7 +478,7 @@ function toggle(id){
   const c = byId(id);
   if (selected.includes(id)) { selected = selected.filter(x=>x!==id); toast(`빼기: ${c.instlPos}`); }
   else { selected.push(id); toast(`추가: ${c.instlPos}`); }
-  save(); renderGrid(); renderList(); updatePreview();
+  save(); renderGrid(); renderList(); updatePreview(); locRefresh();
 }
 function showTab(which){
   $('#tabMap').classList.toggle('on', which==='map'); $('#tabList').classList.toggle('on', which==='list');
@@ -595,9 +616,7 @@ $('#list').addEventListener('click', e => {
   const road = e.target.closest('[data-road]');
   if (road) { const k = road.dataset.road; openRoads.has(k) ? openRoads.delete(k) : openRoads.add(k); renderList(); return; }
   const go = e.target.closest('[data-go]');
-  if (go) { const c = byId(go.dataset.go); if (c && map) { showTab('map'); map.setView([c.lat, c.lot], Math.max(map.getZoom(), 14));
-      let n = 0; const tryOpen = () => { const m = markers.get(c.cctvId); if (m) openPreview(c, m); else if (++n < 12) setTimeout(tryOpen, 300); };
-      setTimeout(tryOpen, 400); } return; }
+  if (go) { const c = byId(go.dataset.go); if (c) openLoc(c); return; }
   const name = e.target.closest('[data-toggle]');
   if (name) toggle(name.dataset.toggle);
 });
@@ -671,7 +690,7 @@ $('#list').addEventListener('change', e => {
   const id = e.target.dataset.id; if(!id) return;
   if (e.target.checked) { if(!selected.includes(id)) selected.push(id); }
   else selected = selected.filter(x => x !== id);
-  save(); renderGrid(); renderList();
+  save(); renderGrid(); renderList(); updatePreview(); locRefresh();
 });
 $('#q').addEventListener('input', renderList);
 
@@ -954,6 +973,78 @@ async function importFromUrl(){
   presets[name] = got.s; renderPresets(name); savePresets();
   applySettings(got.s); toast(`"${name}" 추가됨`);
 }
+
+// ---------- 오른쪽 위치 패널: 목록의 📍 → 오른쪽에 지도 + 영상, 지도의 점을 누르면 그 CCTV로 바뀌고 추가 가능 ----------
+const loc = { c:null, hls:null, map:null, layer:null, marks:new Map(), loaded:new Set(), timer:null };
+function placeLoc(){ const r = document.querySelector('aside').getBoundingClientRect(); $('#loc').style.left = (innerWidth > 760 ? r.right : 0) + 'px'; }
+addEventListener('resize', () => { if ($('#loc').classList.contains('show')) { placeLoc(); loc.map && loc.map.invalidateSize(); } });
+function locStyle(c){ return markerStyle(selected.includes(c.cctvId), c.src); }
+function locBtn(){ if (!loc.c) return; const on = selected.includes(loc.c.cctvId), b = $('#locAdd');
+  b.classList.toggle('on', on); b.textContent = on ? '✓ 모아보기에 있음 · 빼기' : '+ 모아보기에 추가'; }
+function locRefresh(){ // 선택 상태가 바뀌면 버튼·점 색 갱신
+  if (!$('#loc').classList.contains('show')) return;
+  locBtn(); for (const [id,m] of loc.marks) { const c = byId(id); if (c) { m.setStyle(locStyle(c)); if (loc.c && id === loc.c.cctvId) m.setStyle({ radius:11, weight:3, color:'#ffd43b' }); } }
+}
+async function locPlay(c){
+  loc.c = c; $('#locName').textContent = c.instlPos; $('#locAddr').textContent = c.instlAddr || ''; locBtn();
+  const v = document.querySelector('.loc-vid video'), msg = $('#locMsg'); msg.style.display = 'flex'; msg.textContent = '연결 중…';
+  if (loc.hls) { loc.hls.destroy(); loc.hls = null; }
+  if (c.src) { if (!ITS_KEY) { msg.textContent = '인증키를 넣으면 볼 수 있어요'; return; }
+    if (!c.hlsAddr) { try { await resolveNat(c.cctvId); } catch(e){} } if (loc.c !== c) return; }
+  if (!c.hlsAddr) { msg.textContent = '영상 주소를 받지 못했어요'; return; }
+  let retried = false;
+  if (window.Hls && Hls.isSupported()) {
+    const hl = new Hls({ liveSyncDurationCount:2 }); loc.hls = hl; hl.loadSource(c.hlsAddr); hl.attachMedia(v);
+    hl.on(Hls.Events.ERROR, async (_,d) => { if (!d.fatal) return;
+      if (c.src && !retried) { retried = true; msg.textContent = '다시 연결 중…'; try { await resolveNat(c.cctvId); if (loc.hls === hl) { hl.loadSource(c.hlsAddr); return; } } catch(e){} }
+      msg.textContent = '영상 신호 없음'; });
+  } else v.src = c.hlsAddr;
+  v.play().catch(()=>{});
+  locRefresh();
+}
+document.querySelector('.loc-vid video').addEventListener('playing', () => $('#locMsg').style.display = 'none');
+document.querySelector('.loc-vid video').addEventListener('click', () => { if (loc.c) openPreviewBig(loc.c); });
+function locDraw(){ // 지금 보이는 범위의 CCTV만 점으로 그림
+  if (!loc.map) return;
+  const b = loc.map.getBounds().pad(0.2), pool = all.concat([...nat.values()].filter(c => c.lat));
+  const want = new Set();
+  for (const c of pool) { if (!b.contains([c.lat, c.lot])) continue; want.add(c.cctvId);
+    if (loc.marks.has(c.cctvId)) continue;
+    const m = L.circleMarker([c.lat, c.lot], { ...locStyle(c), bubblingMouseEvents:false }).addTo(loc.layer)
+      .bindTooltip(c.instlPos, { direction:'top', offset:[0,-6] });
+    m.on('click', () => locPlay(c));
+    loc.marks.set(c.cctvId, m); }
+  for (const [id,m] of loc.marks) if (!want.has(id)) { loc.layer.removeLayer(m); loc.marks.delete(id); }
+  locRefresh();
+}
+function locLoadNat(){ // 패널 지도에 보이는 지역의 고속도로·국도 CCTV 불러오기
+  if (!ITS_KEY || !loc.map || loc.map.getZoom() < 10) { locDraw(); return; }
+  const b = loc.map.getBounds(), G = 0.5; const jobs = [];
+  for (let gx = Math.floor(b.getWest()/G); gx <= Math.floor(b.getEast()/G); gx++)
+    for (let gy = Math.floor(b.getSouth()/G); gy <= Math.floor(b.getNorth()/G); gy++) {
+      const k = gx+'_'+gy; if (loc.loaded.has(k)) continue; loc.loaded.add(k);
+      ['ex','its'].forEach(t => jobs.push(fetchNat(t, gx*G, (gx+1)*G, gy*G, (gy+1)*G)
+        .then(list => list.forEach(it => { const c = nat.get(it.cctvId); if (c) Object.assign(c, it); else nat.set(it.cctvId, it); }))
+        .catch(() => loc.loaded.delete(k))));
+    }
+  locDraw(); if (jobs.length) Promise.all(jobs).then(locDraw);
+}
+function openLoc(c){
+  closePreview(); placeLoc(); $('#loc').classList.add('show');
+  if (!loc.map) {
+    loc.map = L.map('locMap', { preferCanvas:true, zoomControl:true }).setView([c.lat, c.lot], 15);
+    L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', { maxZoom:18, attribution:'&copy; OpenStreetMap contributors' }).addTo(loc.map);
+    L.tileLayer.wms('https://its.busan.go.kr/geoserver/bsits/wms', { layers:'bsits:vw_link1_line_trfc', format:'image/png', transparent:true, version:'1.1.1', env:'gradeType:trfc', opacity:.8 }).addTo(loc.map);
+    loc.layer = L.layerGroup().addTo(loc.map);
+    loc.map.on('moveend', () => { clearTimeout(loc.timer); loc.timer = setTimeout(locLoadNat, 200); });
+  } else { loc.map.invalidateSize(); loc.map.setView([c.lat, c.lot], Math.max(loc.map.getZoom(), 14)); }
+  setTimeout(() => { loc.map.invalidateSize(); locLoadNat(); }, 60);
+  locPlay(c);
+}
+function closeLoc(){ $('#loc').classList.remove('show'); if (loc.hls) { loc.hls.destroy(); loc.hls = null; } loc.c = null; }
+$('#locClose').addEventListener('click', closeLoc);
+$('#locAdd').addEventListener('click', () => { if (loc.c) toggle(loc.c.cctvId); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('.tile.big') && $('#loc').classList.contains('show')) closeLoc(); });
 
 init();
 </script>
