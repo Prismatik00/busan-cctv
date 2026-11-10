@@ -123,14 +123,8 @@
     </span>
     <button id="presetSave">설정 저장</button>
     <label>열 <select id="cols"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
-    <button class="primary" id="capAll">전체 한 장으로 캡처</button>
-    <button id="capEach">각각 캡처</button>
-    <label>자동 캡처
-      <select id="auto">
-        <option value="0">끔</option><option value="1">1분</option><option value="5">5분</option><option value="10">10분</option><option value="30">30분</option><option value="60">60분</option>
-      </select>
-    </label>
-    <button id="clear">선택 비우기</button>
+    <button class="primary" id="capAll">전체 캡처</button>
+    <button id="clear">모두 비우기</button>
     <button id="export">설정 복사</button>
     <span id="status"></span>
   </div>
@@ -409,7 +403,7 @@ function makeTile(c){
   const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
     <div class="bar"><span title="${c.instlAddr||''}">${c.instlPos}</span>
-    <button data-act="cap">캡처</button><button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
+    <button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
   const start = () => {
@@ -429,7 +423,6 @@ function makeTile(c){
   video.addEventListener('click', () => el.classList.contains('big') ? closeBig() : openBig(el));
   el.querySelector('.bar').addEventListener('click', e => {
     const act = e.target.dataset.act;
-    if (act==='cap') captureOne(p);
     if (act==='reload') start();
     if (act==='del') { closeBig(); selected = selected.filter(x=>x!==c.cctvId); save(); renderGrid(); renderList(); }
   });
@@ -495,12 +488,6 @@ function download(canvas, name){
   canvas.toBlob(b => { const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }, 'image/png');
 }
 function safe(s){ return s.replace(/[\\/:*?"<>|\s]+/g,'_'); }
-function captureOne(p){
-  const w=(p.video.videoWidth||320)*SCALE, h=(p.video.videoHeight||240)*SCALE;
-  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
-  try { drawFrame(cv.getContext('2d'), p, 0, 0, w, h); download(cv, `CCTV_${safe(p.c.instlPos)}_${stamp()}.png`); }
-  catch(e){ toast('이 브라우저에서는 캡처가 막혀 있어요. 크롬이나 엣지로 열어 주세요.'); }
-}
 function captureAll(){
   const list = selected.map(id=>players.get(id)).filter(Boolean);
   if (!list.length) { toast('선택된 CCTV가 없어요.'); return; }
@@ -514,13 +501,12 @@ function captureAll(){
   } catch(e){ toast('이 브라우저에서는 캡처가 막혀 있어요. 크롬이나 엣지로 열어 주세요.'); }
 }
 $('#capAll').addEventListener('click', captureAll);
-$('#capEach').addEventListener('click', () => { selected.forEach((id,i)=>setTimeout(()=>captureOne(players.get(id)), i*350)); });
-$('#clear').addEventListener('click', () => { selected=[]; save(); renderGrid(); renderList(); });
-
-let autoTimer=null;
-$('#auto').addEventListener('change', () => {
-  clearInterval(autoTimer); const m=+$('#auto').value;
-  if (m) { autoTimer=setInterval(captureAll, m*60000); toast(`${m}분마다 전체 캡처를 저장해요 (이 창을 열어 두세요)`); }
+// 모두 비우기: 화면의 CCTV를 전부 빼기 (저장한 설정은 그대로)
+$('#clear').addEventListener('click', async () => {
+  if (!selected.length) { toast('비울 CCTV가 없어요.'); return; }
+  const ok = await dialog({ title:`화면의 CCTV ${selected.length}개를 모두 뺄까요? 저장한 설정은 그대로 남아요.`, okText:'모두 비우기' });
+  if (!ok) return;
+  closeBig(); selected = []; save(); renderGrid(); renderList(); toast('모두 비웠어요');
 });
 
 // ---------- 이름 붙여 설정 저장 / 불러오기 / 삭제 ----------
