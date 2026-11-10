@@ -76,6 +76,19 @@
     box-shadow:0 10px 28px rgba(0,0,0,.55); transform:scale(1.02); cursor:grabbing; }
   .item.ghost .handle { color:#fff; }
   body.dragging-list, body.dragging-list * { cursor:grabbing !important; user-select:none; }
+  #subtabs { display:flex; gap:4px; padding:0 14px 6px; }
+  #subtabs.hide { display:none; }
+  #subtabs button { flex:1; padding:6px; font-size:12px; }
+  #subtabs button.on { background:#263049; border-color:#3d7bfd; color:#fff; }
+  .road { display:flex; align-items:center; gap:8px; padding:9px 10px; margin:2px 0; border-radius:6px; background:#1d212b; cursor:pointer; font-size:13px; }
+  .road:hover { background:#232838; }
+  .road .cnt { margin-left:auto; color:var(--muted); font-size:11px; }
+  .road .sc { background:#ff4d4f; color:#fff; border-radius:10px; font-size:10px; padding:1px 6px; }
+  .road .arr { color:var(--muted); width:12px; }
+  .road-items { padding-left:10px; border-left:2px solid #263049; margin:2px 0 8px 14px; }
+  .item .seq { flex:none; color:var(--muted); font-size:11px; width:22px; text-align:right; margin-top:2px; }
+  .item .go { flex:none; background:none; border:none; padding:0 4px; font-size:13px; cursor:pointer; opacity:.7; }
+  .item .go:hover { opacity:1; }
   .sect { font-size:11px; color:var(--muted); margin:10px 8px 6px; }
   .item small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
   main { flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -136,6 +149,7 @@
     <div class="tabs"><button id="tabMap" class="on">지도</button><button id="tabList">목록</button><button id="wide" title="왼쪽 영역 넓히기/줄이기">지도 크게</button></div>
   </header>
   <div id="map" class="show"></div>
+  <div id="subtabs" class="hide"><button data-mode="busan" class="on">부산</button><button data-mode="ex">고속도로</button><button data-mode="its">국도</button></div>
   <div id="list" class="hide"></div>
 </aside>
 <main>
@@ -217,7 +231,7 @@ async function setItsKey(k){
   let ok = false; try { const j = await fetch(u).then(r => r.json()); ok = !!(j && j.response && Array.isArray(j.response.data)); } catch(e){}
   if (!ok) return false;
   ITS_KEY = k; try { localStorage.setItem(KEY+'-itskey', k); } catch(e){}
-  updateKeyBtn(); natReload();
+  updateKeyBtn(); natReload(); renderList();
   players.forEach(p => { if (p.c.src && !p.c.hlsAddr) p.start(); }); // 키 없어서 멈춰 있던 화면 다시 연결
   return true;
 }
@@ -447,7 +461,7 @@ function toggle(id){
 }
 function showTab(which){
   $('#tabMap').classList.toggle('on', which==='map'); $('#tabList').classList.toggle('on', which==='list');
-  $('#map').classList.toggle('show', which==='map'); $('#list').classList.toggle('hide', which!=='list');
+  $('#map').classList.toggle('show', which==='map'); $('#list').classList.toggle('hide', which!=='list'); $('#subtabs').classList.toggle('hide', which!=='list');
   if (which==='map' && map) setTimeout(()=>map.invalidateSize(), 50);
 }
 $('#tabMap').addEventListener('click', ()=>showTab('map'));
@@ -481,13 +495,84 @@ $('#exportCopy').addEventListener('click', async () => {
 });
 $('#exportClose').addEventListener('click', () => $('#exportBox').classList.remove('show'));
 
+// ---------- 목록: 부산 / 고속도로 / 국도 ----------
+let listMode = 'busan';
+try { listMode = localStorage.getItem(KEY+'-listmode') || 'busan'; } catch(e){}
+const openRoads = new Set(), orderCache = new Map();
+const natAll = { ex:null, its:null }, natLoading = { ex:false, its:null };
+// 도로 이름: 고속도로 "[경부선] …" → 경부고속도로, 국도 "[국도7] …" → 국도 7호선
+function roadOf(t, name){
+  const m = String(name).match(/^\s*\[([^\]]+)\]/); const b = m ? m[1].trim() : '';
+  if (t === 'ex') { if (!b) return { key:'기타', label:'기타 고속도로' };
+    return { key:b, label: /지선$/.test(b) ? b.replace(/지선$/,'지선 고속도로') : b.replace(/선$/,'고속도로') }; }
+  const n = b.match(/국도\s*(\d+)/); if (n) return { key:'국도'+(+n[1]), label:`국도 ${+n[1]}호선`, no:+n[1] };
+  return { key:b || '기타', label:b || '기타', no:9999 };
+}
+// 도로를 따라 순서대로: 한쪽 끝(가장 먼 점)에서 출발해 가까운 CCTV를 차례로 이어 감
+function orderAlongRoad(items){
+  if (items.length < 3) return items.slice();
+  const cx = items.reduce((s,c)=>s+c.lot,0)/items.length, cy = items.reduce((s,c)=>s+c.lat,0)/items.length;
+  const d2 = (a,b) => { const dx=(a.lot-b.lot)*Math.cos(cy*Math.PI/180), dy=a.lat-b.lat; return dx*dx+dy*dy; };
+  let start = items.reduce((best,c)=> d2(c,{lot:cx,lat:cy}) > d2(best,{lot:cx,lat:cy}) ? c : best, items[0]);
+  start = items.reduce((best,c)=> d2(c,start) > d2(best,start) ? c : best, items[0]); // 반대쪽 끝
+  // 북쪽·서쪽(서울 쪽) 끝에서 시작하도록
+  const other = items.reduce((best,c)=> d2(c,start) > d2(best,start) ? c : best, items[0]);
+  if (other.lat > start.lat + 0.05 || (Math.abs(other.lat-start.lat) <= 0.05 && other.lot < start.lot)) start = other;
+  const left = new Set(items); const out = []; let cur = start; left.delete(cur); out.push(cur);
+  while (left.size) { let nb = null, nd = Infinity; for (const c of left) { const d = d2(cur,c); if (d < nd) { nd = d; nb = c; } } left.delete(nb); out.push(nb); cur = nb; }
+  return out;
+}
+async function loadNatAll(t){
+  if (natAll[t] || natLoading[t]) return;
+  natLoading[t] = true; renderList();
+  try {
+    const list = await fetchNat(t, 124, 132, 33, 39);
+    natAll[t] = list.map(it => { const c = nat.get(it.cctvId); if (c) { Object.assign(c, it); return c; } nat.set(it.cctvId, it); return it; });
+  } catch(e){ natAll[t] = []; toast('고속도로·국도 목록을 불러오지 못했어요.'); }
+  natLoading[t] = false; renderList();
+}
+function renderRoads(t, q){
+  if (!ITS_KEY) return `<p class="hint" style="padding:10px">고속도로·국도 CCTV를 보려면 인증키가 필요해요. <button onclick="askItsKey()">인증키 입력</button></p>`;
+  if (!natAll[t]) { loadNatAll(t); return `<p class="hint" style="padding:10px">전국 ${t==='ex'?'고속도로':'국도'} CCTV 목록을 불러오는 중… (몇 초 걸려요)</p>`; }
+  const groups = new Map();
+  natAll[t].forEach(c => { const r = roadOf(t, c.instlPos); if (!groups.has(r.key)) groups.set(r.key, { ...r, items:[] }); groups.get(r.key).items.push(c); });
+  let roads = [...groups.values()];
+  roads.sort(t==='its' ? (a,b)=>(a.no-b.no)||a.label.localeCompare(b.label,'ko') : (a,b)=>a.label.localeCompare(b.label,'ko'));
+  const match = c => !q || c.instlPos.toLowerCase().includes(q);
+  let html = `<p class="sect">${t==='ex'?'고속도로':'국도'} ${roads.length}개 · CCTV ${natAll[t].length}개 · 도로를 누르면 순서대로 펼쳐져요</p>`;
+  for (const r of roads) {
+    const hit = q ? r.items.filter(match) : r.items;
+    if (q && !hit.length && !r.label.toLowerCase().includes(q)) continue;
+    const open = openRoads.has(t+':'+r.key) || (q && hit.length && hit.length <= 40);
+    const selCnt = r.items.filter(c => selected.includes(c.cctvId)).length;
+    html += `<div class="road" data-road="${t}:${r.key}"><span class="arr">${open?'▾':'▸'}</span><b>${r.label}</b>${selCnt?`<span class="sc">${selCnt}</span>`:''}<span class="cnt">${r.items.length}개</span></div>`;
+    if (open) {
+      const ck = t+':'+r.key;
+      if (!orderCache.has(ck)) orderCache.set(ck, orderAlongRoad(r.items));
+      const ordered = orderCache.get(ck);
+      html += '<div class="road-items">' + ordered.map((c,i) => !match(c) && q && !r.label.toLowerCase().includes(q) ? '' : `
+        <div class="item">
+          <span class="seq">${i+1}</span>
+          <input type="checkbox" data-id="${c.cctvId}" ${selected.includes(c.cctvId)?'checked':''}>
+          <div class="name" data-toggle="${c.cctvId}">${c.instlPos.replace(/^\s*\[[^\]]+\]\s*/,'')}</div>
+          <button class="go" data-go="${c.cctvId}" title="지도에서 보기">📍</button>
+        </div>`).join('') + '</div>';
+    }
+  }
+  return html;
+}
+document.querySelectorAll('#subtabs button').forEach(b => b.addEventListener('click', () => {
+  listMode = b.dataset.mode; try { localStorage.setItem(KEY+'-listmode', listMode); } catch(e){}
+  $('#list').scrollTop = 0; renderList();
+}));
 function renderList(){
+  document.querySelectorAll('#subtabs button').forEach(b => b.classList.toggle('on', b.dataset.mode === listMode));
+  if (listMode !== 'busan') { $('#list').innerHTML = renderRoads(listMode, $('#q').value.trim().toLowerCase()); return; }
   const q = $('#q').value.trim().toLowerCase();
   const match = c => !q || (c.instlPos+' '+c.instlAddr).toLowerCase().includes(q);
   // 선택한 CCTV는 모아보기와 같은 순서로 위에, 나머지는 가나다순으로 아래에
   const sel = selected.map(byId).filter(c => c && match(c));
-  const pool = q ? all.concat([...nat.values()].filter(c => c.hlsAddr)) : all; // 검색할 땐 지도에서 불러온 고속도로·국도 CCTV도 포함
-  const rest = pool.filter(c => !selected.includes(c.cctvId) && match(c));
+  const rest = all.filter(c => !selected.includes(c.cctvId) && match(c));
   const row = (c, isSel) => `
     <div class="item${isSel?' sel':''}" ${isSel?`data-sel="${c.cctvId}"`:''}>
       ${isSel?`<span class="num">${selected.indexOf(c.cctvId)+1}</span>`:''}
@@ -497,7 +582,7 @@ function renderList(){
     </div>`;
   let html = '';
   if (sel.length) html += `<p class="sect">선택한 CCTV · 모아보기 순서 (≡ 를 잡고 끌어서 바꾸기)</p>` + sel.map(c=>row(c,true)).join('');
-  if (rest.length) html += `<p class="sect">전체 CCTV</p>` + rest.map(c=>row(c,false)).join('');
+  if (rest.length) html += `<p class="sect">부산시 CCTV</p>` + rest.map(c=>row(c,false)).join('');
   $('#list').innerHTML = html || '<p class="hint" style="padding:10px">검색 결과가 없어요.</p>';
 }
 function moveSel(id, to){ // to: 새 위치 index
@@ -507,6 +592,12 @@ function moveSel(id, to){ // to: 새 위치 index
   save(); renderGrid(); renderList();
 }
 $('#list').addEventListener('click', e => {
+  const road = e.target.closest('[data-road]');
+  if (road) { const k = road.dataset.road; openRoads.has(k) ? openRoads.delete(k) : openRoads.add(k); renderList(); return; }
+  const go = e.target.closest('[data-go]');
+  if (go) { const c = byId(go.dataset.go); if (c && map) { showTab('map'); map.setView([c.lat, c.lot], Math.max(map.getZoom(), 14));
+      let n = 0; const tryOpen = () => { const m = markers.get(c.cctvId); if (m) openPreview(c, m); else if (++n < 12) setTimeout(tryOpen, 300); };
+      setTimeout(tryOpen, 400); } return; }
   const name = e.target.closest('[data-toggle]');
   if (name) toggle(name.dataset.toggle);
 });
