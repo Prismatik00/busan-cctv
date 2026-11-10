@@ -93,6 +93,29 @@
   #locAdd.on { background:#2a2f3a; border-color:#3a4050; color:#ffb0b0; }
   #locMap { flex:1; min-height:200px; }
   @media (max-width:760px){ #loc { left:0 !important; width:100%; } }
+  #routeBox { padding:10px 12px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:#151821; flex:none; max-height:55vh; overflow:auto; }
+  #routeBox.hide { display:none; }
+  .rb-head { display:flex; align-items:center; margin-bottom:4px; } .rb-head b { font-size:13px; } .rb-head button { margin-left:auto; padding:3px 8px; }
+  .rb-pt { position:relative; display:flex; align-items:center; gap:6px; margin:4px 0; }
+  .rb-pt .tag { flex:none; width:22px; height:22px; border-radius:50%; color:#fff; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .rb-pt input { flex:1; min-width:0; padding:6px 8px; border-radius:7px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:13px; }
+  .rb-pt input.set { border-color:#3d7bfd; }
+  .rb-pt .x { flex:none; padding:3px 7px; font-size:11px; }
+  .rb-sug { position:absolute; left:28px; right:30px; top:100%; z-index:50; background:#1d212b; border:1px solid var(--line); border-radius:8px; max-height:240px; overflow:auto; box-shadow:0 8px 20px rgba(0,0,0,.5); }
+  .rb-sug div { padding:7px 9px; font-size:12px; cursor:pointer; border-bottom:1px solid #242a36; }
+  .rb-sug div:hover, .rb-sug div.on { background:#263049; }
+  .rb-sug small { display:block; color:var(--muted); font-size:10px; margin-top:1px; }
+  .rb-sug .k { color:#ffb35c; font-size:10px; margin-right:4px; }
+  button.small { padding:3px 9px; font-size:12px; }
+  .rb-opts { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0 4px; font-size:12px; color:var(--muted); }
+  .rb-opts select { padding:3px 6px; font-size:12px; }
+  #rbInfo { font-size:12px; margin:6px 0; min-height:16px; }
+  .rb-btns { display:flex; gap:6px; }
+  .route-num { background:#ffd43b; color:#222; border:none; box-shadow:none; font:700 10px/1 sans-serif; padding:2px 4px; border-radius:8px; }
+  .route-num::before { display:none; }
+  .route-pin { width:24px; height:24px; border-radius:50%; color:#fff; font:700 11px/24px sans-serif; text-align:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.5); }
+  .route-toggle { background:#fff; color:#333; border:2px solid rgba(0,0,0,.2); border-radius:6px; padding:5px 8px; font-size:12px; font-weight:600; cursor:pointer; }
+  .route-toggle.on { background:#5f3dc4; color:#fff; border-color:#7048e8; }
   #subtabs { display:flex; gap:4px; padding:0 14px 6px; }
   #subtabs.hide { display:none; }
   #subtabs button { flex:1; padding:6px; font-size:12px; }
@@ -174,6 +197,19 @@
     <p class="hint" id="count">CCTV 목록 불러오는 중…</p>
     <div class="tabs"><button id="tabMap" class="on">지도</button><button id="tabList">목록</button><button id="wide" title="왼쪽 영역 넓히기/줄이기">지도 크게</button></div>
   </header>
+  <div id="routeBox" class="hide">
+    <div class="rb-head"><b>경로로 CCTV 고르기</b><button id="rbClose" title="닫기">✕</button></div>
+    <p class="hint" style="margin:0 0 6px">장소를 검색하거나 지도를 눌러 출발 → 도착을 찍으세요. 점은 끌어서 옮길 수 있어요.</p>
+    <div id="rbPts"></div>
+    <button id="rbAddVia" class="small">+ 경유지</button>
+    <div class="rb-opts">
+      <label>범위 <select id="rbRange"><option value="100">100m</option><option value="200" selected>200m</option><option value="300">300m</option><option value="500">500m</option></select></label>
+      <label>간격 <select id="rbGap"><option value="0">전부</option><option value="1000">1km마다</option><option value="2000" selected>2km마다</option><option value="5000">5km마다</option></select></label>
+      <label><input type="checkbox" id="rbNat"> 고속도로·국도</label>
+    </div>
+    <div id="rbInfo"></div>
+    <div class="rb-btns"><button class="primary" id="rbApply" disabled>모아보기에 넣기</button><button id="rbClear">지우기</button></div>
+  </div>
   <div id="map" class="show"></div>
   <div id="subtabs" class="hide"><button data-mode="busan" class="on">부산</button><button data-mode="ex">고속도로</button><button data-mode="its">국도</button></div>
   <div id="list" class="hide"></div>
@@ -416,6 +452,10 @@ function initMap(){
   natBtn.onAdd = () => { const b = L.DomUtil.create('button','nat-toggle'); b.title = '고속도로·국도 CCTV 표시 (켤 때만 국가교통정보센터 API를 써요)';
     L.DomEvent.disableClickPropagation(b); b.onclick = () => setNatOn(!natOn); return b; };
   natBtn.addTo(map);
+  const routeBtn = L.control({ position:'topleft' });
+  routeBtn.onAdd = () => { const b = L.DomUtil.create('button','route-toggle'); b.textContent = '🛣 경로로 고르기';
+    L.DomEvent.disableClickPropagation(b); b.onclick = () => route.open ? routeClose() : routeOpen(); return b; };
+  routeBtn.addTo(map);
   const paintNatBtn = () => { const b = document.querySelector('.nat-toggle'); if (!b) return;
     b.classList.toggle('on', natOn); b.innerHTML = `<span style="color:#f08c00">●</span><span style="color:#2f9e44">●</span> 고속도로·국도 ${natOn ? '켬' : '끔'}`; };
   setNatOn = on => { natOn = on; try { localStorage.setItem(KEY+'-natOn', on ? '1' : ''); } catch(e){}
@@ -451,7 +491,7 @@ function initMap(){
   loadNatView();
   map.on('zoomstart movestart', () => { if (!preview.touchOpen) closePreview(); });
   map.on('move zoom', placePreview);
-  map.on('click', closePreview); // 휴대폰: 지도 빈 곳을 누르면 미리보기 닫기
+  map.on('click', e => { closePreview(); if (route.open) routeMapClick(e.latlng); }); // 휴대폰: 지도 빈 곳을 누르면 미리보기 닫기 · 경로 모드면 점 찍기
 }
 // ---------- 지도 위 CCTV 미리보기 (실시간 영상) ----------
 // 지도 밖으로 잘리지 않도록 페이지 위에 떠 있는 카드로 표시
@@ -538,6 +578,7 @@ function toggle(id){
 function showTab(which){
   $('#tabMap').classList.toggle('on', which==='map'); $('#tabList').classList.toggle('on', which==='list');
   $('#map').classList.toggle('show', which==='map'); $('#list').classList.toggle('hide', which!=='list'); $('#subtabs').classList.toggle('hide', which!=='list');
+  $('#routeBox').classList.toggle('hide', !(route.open && which==='map'));
   if (which==='map' && map) setTimeout(()=>map.invalidateSize(), 50);
 }
 $('#tabMap').addEventListener('click', ()=>showTab('map'));
@@ -1106,6 +1147,153 @@ function closeLoc(){ $('#loc').classList.remove('show'); if (loc.hls) { loc.hls.
 $('#locClose').addEventListener('click', closeLoc);
 $('#locAdd').addEventListener('click', () => { if (loc.c) toggle(loc.c.cctvId); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('.tile.big') && $('#loc').classList.contains('show')) closeLoc(); });
+
+// ---------- 경로로 CCTV 고르기: 출발·경유·도착 → 도로 경로(OSRM) → 경로 근처 CCTV를 가는 순서대로 ----------
+const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+const route = { open:false, pts:[null, null], marks:[], line:null, hits:[], layer:null, timer:null, seq:0 };
+const PT_COLOR = i => i === 0 ? '#2f9e44' : i === route.pts.length-1 ? '#e03131' : '#7048e8';
+const PT_TAG = i => i === 0 ? '출' : i === route.pts.length-1 ? '도' : String(i);
+function routeOpen(){
+  route.open = true; showTab('map'); $('#routeBox').classList.remove('hide');
+  document.querySelector('.route-toggle')?.classList.add('on');
+  if (!route.layer) route.layer = L.layerGroup().addTo(map);
+  const nb = $('#rbNat'); nb.disabled = !ITS_KEY; nb.checked = !!ITS_KEY && natOn; nb.parentElement.title = ITS_KEY ? '' : '인증키를 넣으면 쓸 수 있어요';
+  routeRenderPts(); setTimeout(() => map.invalidateSize(), 50);
+}
+function routeClose(){ route.open = false; $('#routeBox').classList.add('hide'); document.querySelector('.route-toggle')?.classList.remove('on'); routeClearAll(); setTimeout(() => map.invalidateSize(), 50); }
+function routeClearAll(){ route.pts = [null, null]; route.hits = []; if (route.layer) route.layer.clearLayers(); route.marks = []; route.line = null; routeRenderPts(); $('#rbInfo').textContent = ''; $('#rbApply').disabled = true; }
+function routeRenderPts(){
+  const box = $('#rbPts');
+  box.innerHTML = route.pts.map((p,i) => `<div class="rb-pt" data-i="${i}">
+      <span class="tag" style="background:${PT_COLOR(i)}">${PT_TAG(i)}</span>
+      <input type="text" placeholder="${i===0?'출발지':i===route.pts.length-1?'도착지':'경유지'} 검색 또는 지도 클릭" value="${p ? p.name.replace(/"/g,'&quot;') : ''}" class="${p?'set':''}">
+      ${(i>0 && i<route.pts.length-1) || p ? `<button class="x" title="지우기">✕</button>` : ''}
+    </div>`).join('');
+  routeDrawPins();
+}
+function routeDrawPins(){
+  route.marks.forEach(m => route.layer && route.layer.removeLayer(m)); route.marks = [];
+  if (!route.layer) return;
+  route.pts.forEach((p,i) => { if (!p) return;
+    const m = L.marker([p.lat, p.lng], { draggable:true, zIndexOffset:1000,
+      icon:L.divIcon({ className:'', html:`<div class="route-pin" style="background:${PT_COLOR(i)}">${PT_TAG(i)}</div>`, iconSize:[24,24], iconAnchor:[12,12] }) }).addTo(route.layer);
+    m.on('dragend', () => { const ll = m.getLatLng(); route.pts[i] = { ...p, lat:ll.lat, lng:ll.lng, name:p.name.startsWith('지도에서') ? `지도에서 고른 위치 (${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)})` : p.name + ' (옮김)' }; routeRenderPts(); routeCompute(); });
+    route.marks.push(m); });
+}
+function routeSetPt(i, p){ route.pts[i] = p; routeRenderPts(); routeCompute(); }
+function routeMapClick(ll){
+  const p = { lat:ll.lat, lng:ll.lng, name:`지도에서 고른 위치 (${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)})` };
+  const empty = route.pts.findIndex(x => !x);
+  if (empty >= 0) routeSetPt(empty, p);
+  else { route.pts.push(p); routeRenderPts(); routeCompute(); } // 다 찼으면 새 도착지로 (이전 도착지는 경유지가 됨)
+}
+$('#rbAddVia').addEventListener('click', () => { route.pts.splice(route.pts.length-1, 0, null); routeRenderPts(); });
+$('#rbClose').addEventListener('click', routeClose);
+$('#rbClear').addEventListener('click', routeClearAll);
+['rbRange','rbGap','rbNat'].forEach(id => $('#'+id).addEventListener('change', () => routeCompute(true)));
+$('#rbPts').addEventListener('click', e => {
+  const row = e.target.closest('.rb-pt'); if (!row) return; const i = +row.dataset.i;
+  if (e.target.classList.contains('x')) { if (i>0 && i<route.pts.length-1) route.pts.splice(i,1); else route.pts[i] = null; routeRenderPts(); routeCompute(); return; }
+  const s = e.target.closest('[data-sug]'); if (s) { const p = row._sug[+s.dataset.sug]; routeSetPt(i, p); map.setView([p.lat, p.lng], Math.max(map.getZoom(), 14)); }
+});
+// 장소 검색: CCTV 이름 + OpenStreetMap 장소 검색
+let sugTimer = null, sugSeq = 0;
+$('#rbPts').addEventListener('input', e => {
+  if (e.target.tagName !== 'INPUT') return;
+  const row = e.target.closest('.rb-pt'), q = e.target.value.trim(); clearTimeout(sugTimer);
+  row.querySelector('.rb-sug')?.remove(); if (q.length < 2) return;
+  sugTimer = setTimeout(() => routeSuggest(row, q), 450);
+});
+$('#rbPts').addEventListener('keydown', e => { if (e.key === 'Escape') e.target.closest('.rb-pt')?.querySelector('.rb-sug')?.remove(); });
+async function routeSuggest(row, q){
+  const seq = ++sugSeq, ql = q.toLowerCase();
+  const cctv = all.concat([...nat.values()]).filter(c => c.lat && c.instlPos.toLowerCase().includes(ql)).slice(0, 5)
+    .map(c => ({ lat:c.lat, lng:c.lot, name:c.instlPos, sub:'CCTV · ' + (c.instlAddr||''), kind:'CCTV' }));
+  const show = list => { row.querySelector('.rb-sug')?.remove(); if (!list.length) return; row._sug = list;
+    const d = document.createElement('div'); d.className = 'rb-sug';
+    d.innerHTML = list.map((s,i) => `<div data-sug="${i}"><span class="k">${s.kind}</span>${s.name}<small>${s.sub||''}</small></div>`).join('');
+    row.appendChild(d); };
+  show(cctv);
+  try {
+    const b = map.getBounds();
+    const u = `https://nominatim.openstreetmap.org/search?format=json&limit=6&countrycodes=kr&accept-language=ko&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}&q=${encodeURIComponent(q)}`;
+    const r = await fetch(u).then(x => x.json()); if (seq !== sugSeq) return;
+    const places = r.map(x => { const parts = x.display_name.split(',').map(s=>s.trim()); return { lat:+x.lat, lng:+x.lon, name:parts[0], sub:parts.slice(1,4).join(' '), kind:'장소' }; });
+    show(cctv.concat(places));
+    if (!cctv.length && !places.length) { row.querySelector('.rb-sug')?.remove(); const d = document.createElement('div'); d.className='rb-sug'; d.innerHTML = '<div>검색 결과가 없어요. 지도를 직접 눌러 찍어 주세요.</div>'; row.appendChild(d); }
+  } catch(e){}
+}
+document.addEventListener('click', e => { if (!e.target.closest('.rb-pt')) document.querySelectorAll('.rb-sug').forEach(x => x.remove()); });
+// 경로 계산 + 근처 CCTV 찾기
+function routeCompute(keepRoute){ clearTimeout(route.timer); route.timer = setTimeout(() => routeRun(keepRoute), 300); }
+async function routeRun(keepRoute){
+  const pts = route.pts.filter(Boolean), seq = ++route.seq;
+  if (!route.pts[0] || !route.pts[route.pts.length-1] || pts.length < 2) {
+    if (route.line) { route.layer.removeLayer(route.line); route.line = null; } route.hits = []; routeShowHits();
+    $('#rbInfo').textContent = route.pts[0] || route.pts[route.pts.length-1] ? '출발지와 도착지를 모두 정해 주세요.' : ''; $('#rbApply').disabled = true; return; }
+  let geo = keepRoute && route.geo;
+  if (!geo) {
+    $('#rbInfo').textContent = '경로 계산 중…';
+    try {
+      const u = OSRM + pts.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(';') + '?overview=full&geometries=geojson';
+      const j = await fetch(u).then(r => r.json()); if (seq !== route.seq) return;
+      if (j.code !== 'Ok' || !j.routes || !j.routes.length) throw new Error(j.code);
+      geo = route.geo = { coords:j.routes[0].geometry.coordinates, km:j.routes[0].distance/1000, min:j.routes[0].duration/60 };
+    } catch(e){ if (seq === route.seq) { $('#rbInfo').textContent = '경로를 찾지 못했어요. 점 위치를 조금 옮겨 보세요. (길찾기 서버가 잠시 안 될 수도 있어요)'; $('#rbApply').disabled = true; } return; }
+    if (route.line) route.layer.removeLayer(route.line);
+    route.line = L.polyline(geo.coords.map(([x,y]) => [y,x]), { color:'#7048e8', weight:6, opacity:.75 }).addTo(route.layer);
+    route.line.bringToBack();
+    if (!keepRoute) map.fitBounds(route.line.getBounds().pad(0.15));
+  }
+  // 고속도로·국도 CCTV: 경로가 지나는 지역 목록 (저장된 것 우선, 없으면 받아 옴)
+  if ($('#rbNat').checked && ITS_KEY) {
+    const cells = new Set(geo.coords.map(([x,y]) => Math.floor(x/NAT_G)+'_'+Math.floor(y/NAT_G)));
+    $('#rbInfo').textContent = '경로 근처 고속도로·국도 CCTV 확인 중…';
+    await Promise.all([...cells].flatMap(k => { const [gx,gy] = k.split('_').map(Number); return ['ex','its'].map(t => natTile(t, gx, gy).catch(()=>[])); }));
+    if (seq !== route.seq) return;
+  }
+  const range = +$('#rbRange').value, gap = +$('#rbGap').value;
+  const pool = all.concat($('#rbNat').checked ? [...nat.values()].filter(c => c.hlsAddr) : []);
+  let hits = matchRoute(geo.coords, pool, range);
+  if (gap) { const out = []; for (const h of hits) if (!out.length || h.along - out[out.length-1].along >= gap) out.push(h); hits = out; }
+  route.hits = hits; routeShowHits();
+  $('#rbInfo').innerHTML = `거리 <b>${geo.km.toFixed(1)}km</b> · 약 ${Math.round(geo.min)}분 (교통상황 미반영) · CCTV <b>${hits.length}개</b>`;
+  $('#rbApply').disabled = !hits.length;
+}
+function matchRoute(coords, pool, range){
+  const lat0 = coords[0][1], kx = 111320*Math.cos(lat0*Math.PI/180), ky = 110540;
+  const P = coords.map(([x,y]) => [x*kx, y*ky]), cum = [0];
+  for (let i = 1; i < P.length; i++) cum[i] = cum[i-1] + Math.hypot(P[i][0]-P[i-1][0], P[i][1]-P[i-1][1]);
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; P.forEach(([x,y]) => { minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); });
+  const res = [], seen = new Set();
+  for (const c of pool) {
+    if (seen.has(c.cctvId)) continue;
+    const qx = c.lot*kx, qy = c.lat*ky;
+    if (qx < minX-range || qx > maxX+range || qy < minY-range || qy > maxY+range) continue;
+    let best = Infinity, along = 0;
+    for (let i = 1; i < P.length; i++) {
+      const ax=P[i-1][0], ay=P[i-1][1], vx=P[i][0]-ax, vy=P[i][1]-ay, l2 = vx*vx+vy*vy;
+      const t = l2 ? Math.max(0, Math.min(1, ((qx-ax)*vx + (qy-ay)*vy)/l2)) : 0;
+      const d = Math.hypot(qx-(ax+t*vx), qy-(ay+t*vy));
+      if (d < best) { best = d; along = cum[i-1] + t*Math.sqrt(l2); }
+    }
+    if (best <= range) { res.push({ c, along, d:best }); seen.add(c.cctvId); }
+  }
+  return res.sort((a,b) => a.along - b.along);
+}
+function routeShowHits(){
+  if (!route.layer) return;
+  (route.hitMarks || []).forEach(m => route.layer.removeLayer(m));
+  route.hitMarks = route.hits.map((h,i) => L.circleMarker([h.c.lat, h.c.lot], { radius:11, color:'#ffd43b', weight:3, fill:false, interactive:false }).addTo(route.layer)
+    .bindTooltip(String(i+1), { permanent:true, direction:'center', className:'route-num' }));
+}
+$('#rbApply').addEventListener('click', async () => {
+  const ids = route.hits.map(h => h.c.cctvId); if (!ids.length) return;
+  const ok = await dialog({ title:`모아보기를 경로의 CCTV ${ids.length}개로 바꿀까요? (가는 순서대로) 지금 화면을 남기려면 먼저 "설정 저장"을 해 두세요.`, okText:'바꾸기' });
+  if (!ok) return;
+  closeBig(); selected = ids; save(); renderGrid(); renderList();
+  toast(`경로 CCTV ${ids.length}개를 넣었어요 · "설정 저장"으로 이름 붙여 두세요`);
+});
 
 init();
 </script>
