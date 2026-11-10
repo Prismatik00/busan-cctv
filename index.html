@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>부산 CCTV 모아보기</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -22,6 +23,14 @@
   .preset select { border-radius:8px 0 0 8px; max-width:180px; }
   .preset button { border-radius:0 8px 8px 0; border-left:none; color:#ff8a8a; }
   .preset button:disabled { color:var(--muted); opacity:.5; cursor:default; }
+  #qrBox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2600; }
+  #qrBox.show { display:flex; }
+  #qrBox .box { background:var(--panel); padding:18px; border-radius:12px; width:min(360px,92vw); text-align:center; }
+  #qrBox p { margin:0 0 10px; font-size:14px; }
+  #qrImg { background:#fff; border-radius:8px; padding:10px; display:inline-block; }
+  #qrImg img, #qrImg svg { display:block; width:260px; height:260px; max-width:70vw; max-height:70vw; }
+  #qrLink { width:100%; margin-top:10px; padding:7px 8px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--muted); font-size:11px; }
+  #qrBox .btns { display:flex; gap:8px; justify-content:center; margin-top:12px; }
   #dlg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2600; }
   #dlg.show { display:flex; }
   #dlg .box { background:var(--panel); padding:18px; border-radius:12px; width:min(380px,90vw); }
@@ -125,6 +134,7 @@
       <button id="presetDel" title="선택한 설정 삭제">삭제</button>
     </span>
     <button id="presetSave">설정 저장</button>
+    <button id="presetQR" title="지금 설정을 QR·링크로 다른 기기에 보내기">QR 만들기</button>
     <label>열 <select id="cols"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
     <button class="primary" id="capAll">전체 캡처</button>
     <button id="clear">모두 비우기</button>
@@ -138,6 +148,13 @@
 <button class="navbtn" id="navPrev" title="이전 CCTV (←)">‹</button>
 <button class="navbtn" id="navNext" title="다음 CCTV (→)">›</button>
 <div id="navCount"></div>
+<div id="qrBox"><div class="box">
+  <p id="qrTitle"></p>
+  <div id="qrImg"></div>
+  <p class="hint" style="margin:8px 0 0">휴대폰 카메라로 찍으면 이 설정이 그 기기에 추가돼요.</p>
+  <input id="qrLink" type="text" readonly>
+  <div class="btns"><button class="primary" id="qrCopy">링크 복사</button><button id="qrClose">닫기</button></div>
+</div></div>
 <div id="dlg"><div class="box">
   <p id="dlgTitle"></p>
   <input id="dlgInput" type="text" maxlength="30">
@@ -156,9 +173,10 @@
 const API = 'https://its.busan.go.kr/api-n/v1/bsits/user/cctvs';
 const KEY = 'busan-cctv-selected';
 // 처음 여는 기기에서 보여줄 기본 구성 (모아보기 순서)
-const DEFAULT_SELECTED = ['CTV0000137','CTV0000519','CTV0000521','CTV0000525','CTV0000702','CTV0000706',
-  'CTV0000003','CTV0000051','CTV0000050','CTV0000052','CTV0000138','CTV0000034'];
-const DEFAULT_COLS = '3';
+const DEFAULT_SELECTED = ['CTV0000137','CTV0000195','CTV0000069','CTV0000525','CTV0000522','CTV0000519','CTV0000702',
+  'CTV0000706','CTV0000003','CTV0000051','CTV0000050','CTV0000052','CTV0000138','CTV0000034'];
+const DEFAULT_COLS = '2';
+const DEFAULT_VIEW = { c:[35.11633,129.04745], z:15 };
 let all = [];                 // 전체 CCTV 목록
 let selected = load();        // 선택된 cctvId 순서 배열
 const players = new Map();    // cctvId -> {hls, video, el}
@@ -187,6 +205,7 @@ async function init(){
   selected = selected.filter(id => byId(id));
   initMap();
   renderList(); renderGrid();
+  importFromUrl();
 }
 
 // ---------- 지도 ----------
@@ -197,7 +216,7 @@ function markerStyle(on){
 }
 function initMap(){
   if (!window.L) { $('#map').innerHTML='<p class="hint" style="padding:12px">지도를 불러오지 못했어요. 목록 탭을 이용해 주세요.</p>'; return; }
-  let view = { c:[35.16,129.06], z:11 };
+  let view = DEFAULT_VIEW;
   try { view = JSON.parse(localStorage.getItem(KEY+'-view')) || view; } catch(e){}
   map = L.map('map', { preferCanvas:true }).setView(view.c, view.z);
   map.on('moveend', () => { try { const c=map.getCenter(); localStorage.setItem(KEY+'-view', JSON.stringify({ c:[+c.lat.toFixed(5), +c.lng.toFixed(5)], z:map.getZoom() })); } catch(e){} });
@@ -516,7 +535,7 @@ $('#clear').addEventListener('click', async () => {
 const PKEY = KEY + '-presets';
 function loadPresets(){
   try { const v = localStorage.getItem(PKEY); if (v !== null) return JSON.parse(v) || {}; } catch(e){}
-  return { '기본': { selected:DEFAULT_SELECTED.slice(), cols:DEFAULT_COLS } }; // 처음엔 기본 구성 하나를 넣어 둠
+  return { '기본': { selected:DEFAULT_SELECTED.slice(), cols:DEFAULT_COLS, view:DEFAULT_VIEW } }; // 처음엔 기본 구성 하나를 넣어 둠
 }
 let presets = loadPresets();
 function savePresets(){ try { localStorage.setItem(PKEY, JSON.stringify(presets)); localStorage.setItem(KEY+'-preset-cur', $('#preset').value); } catch(e){ toast('이 브라우저에서는 저장이 안 돼요.'); } }
@@ -574,6 +593,47 @@ $('#presetDel').addEventListener('click', async () => {
   delete presets[n]; renderPresets(''); savePresets(); toast(`"${n}" 삭제됨`);
 });
 try { renderPresets(localStorage.getItem(KEY+'-preset-cur') || ''); } catch(e){ renderPresets(''); }
+
+// ---------- QR·링크로 설정 보내기 / 받기 ----------
+// 링크 형식: ...?s=<압축 설정>  (이름|열|위도,경도,줌|CCTV번호.번호.번호…)
+function encodeSettings(name, s){
+  const ids = (s.selected||[]).map(id => String(+id.replace(/\D/g,''))).join('.');
+  const v = s.view ? `${s.view.c[0]},${s.view.c[1]},${s.view.z}` : '';
+  return [name, s.cols||'', v, ids, s.wide?'1':''].map(encodeURIComponent).join('|');
+}
+function decodeSettings(str){
+  const [name, cols, v, ids, wide] = str.split('|').map(decodeURIComponent);
+  const s = { selected:(ids||'').split('.').filter(Boolean).map(n => 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1' };
+  if (v) { const [a,b,z] = v.split(',').map(Number); if (!isNaN(a)&&!isNaN(b)&&!isNaN(z)) s.view = { c:[a,b], z }; }
+  return { name: name || '받은 설정', s };
+}
+$('#presetQR').addEventListener('click', () => {
+  const name = $('#preset').value || '공유 설정';
+  const s = currentSettings(); // 지금 화면 그대로 보냄
+  const url = location.origin + location.pathname + '?s=' + encodeURIComponent(encodeSettings(name, s));
+  $('#qrTitle').textContent = `"${name}" 설정 (${s.selected.length}개 CCTV)`;
+  $('#qrLink').value = url;
+  if (window.qrcode) { const q = qrcode(0, 'M'); q.addData(url); q.make(); $('#qrImg').innerHTML = q.createSvgTag({ cellSize:4, margin:2, scalable:true }); }
+  else $('#qrImg').textContent = 'QR을 만들지 못했어요. 링크를 복사해서 보내 주세요.';
+  $('#qrBox').classList.add('show');
+});
+$('#qrCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#qrLink').value); } catch(e){ $('#qrLink').select(); document.execCommand('copy'); }
+  toast('링크를 복사했어요');
+});
+$('#qrClose').addEventListener('click', () => $('#qrBox').classList.remove('show'));
+$('#qrBox').addEventListener('click', e => { if (e.target.id === 'qrBox') $('#qrBox').classList.remove('show'); });
+// 링크로 열었을 때: 설정 추가할지 묻고, 주소창은 깔끔하게 정리
+async function importFromUrl(){
+  const raw = new URLSearchParams(location.search).get('s'); if (!raw) return;
+  history.replaceState(null, '', location.pathname);
+  let got; try { got = decodeSettings(raw); } catch(e){ toast('설정 링크를 읽지 못했어요.'); return; }
+  const name = await dialog({ title:`받은 설정(${got.s.selected.length}개 CCTV)을 이 기기에 추가할까요? 이름을 정해 주세요.`, value:got.name, okText:'추가',
+    check: v => presets[v] ? `이 기기에 있는 "${v}" 설정을 덮어써요.` : '' });
+  if (!name) return;
+  presets[name] = got.s; renderPresets(name); savePresets();
+  applySettings(got.s); toast(`"${name}" 추가됨`);
+}
 
 init();
 </script>
