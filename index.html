@@ -296,6 +296,38 @@ async function fetchNat(t, minX, maxX, minY, maxY){
   const j = await fetch(u).then(r => r.json());
   return ((j.response && j.response.data) || []).filter(d => d.cctvurl && d.coordx && d.coordy).map(d => natItem(t, d));
 }
+// ---------- 고속도로·국도 위치 목록 저장 (IndexedDB) : 1주일에 한 번만 새로 받음 ----------
+const NAT_G = 0.5, WEEK = 7*24*3600e3, REFRESH_GAP = 10*60e3;
+const idb = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => { const r = indexedDB.open('busan-cctv', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }));
+  return {
+    get: async k => { try { const db = await open(); return await new Promise(res => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(undefined); }); } catch(e){ return undefined; } },
+    set: async (k, v) => { try { const db = await open(); await new Promise(res => { const tx = db.transaction('kv','readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = res; tx.onerror = res; }); } catch(e){} }
+  };
+})();
+const packNat = list => list.map(x => [x.instlPos, x.lot, x.lat, x.hlsAddr]);
+const unpackNat = (t, rows) => rows.map(([n,x,y,u]) => ({ cctvId:natId(t,x,y,n), instlPos:n, instlAddr:t==='ex'?'고속도로':'국도', lat:y, lot:x, hlsAddr:u, src:t }));
+function mergeNat(list){ return list.map(it => { const c = nat.get(it.cctvId); if (c) { Object.assign(c, it); return c; } nat.set(it.cctvId, it); return it; }); }
+const inflight = new Map();
+// 저장된 목록이 1주일 안이면 그대로 쓰고(호출 0), 아니면 API로 받아서 저장
+// force: 영상 주소가 만료된 것 같을 때 새로 받기 (같은 지역은 10분에 한 번까지만)
+async function cachedNat(key, t, box, force){
+  if (inflight.has(key)) return inflight.get(key);
+  const job = (async () => {
+    const c = await idb.get(key), age = c ? Date.now() - c.t : Infinity;
+    if (c && (force ? age < REFRESH_GAP : age < WEEK)) return mergeNat(unpackNat(t, c.items));
+    try {
+      const list = await fetchNat(t, ...box);
+      idb.set(key, { t:Date.now(), items:packNat(list) });
+      return mergeNat(list);
+    } catch(e){ if (c) return mergeNat(unpackNat(t, c.items)); throw e; }
+  })();
+  inflight.set(key, job); job.finally(() => inflight.delete(key));
+  return job;
+}
+const natTile = (t, gx, gy, force) => cachedNat(`tile:${t}:${gx}_${gy}`, t, [gx*NAT_G, (gx+1)*NAT_G, gy*NAT_G, (gy+1)*NAT_G], force);
 function ensureNat(id){ // 아직 지도에서 안 불러온 고속도로·국도 CCTV는 저장된 정보로 자리만 만들어 둠
   if (nat.has(id)) return nat.get(id);
   const m = id.match(/^([ei])(\d+)_(\d+)/); if (!m) return undefined;
@@ -304,9 +336,9 @@ function ensureNat(id){ // 아직 지도에서 안 불러온 고속도로·국�
               lat:+m[3]/1e5, lot:+m[2]/1e5, hlsAddr:'', src:m[1]==='e'?'ex':'its' };
   nat.set(id, c); return c;
 }
-async function resolveNat(id){ // 영상 주소(토큰 포함)를 새로 받아 옴
+async function resolveNat(id, force){ // 영상 주소 찾기: 저장된 목록 → 없거나 만료면 그 지역을 새로 받음
   const c = ensureNat(id); if (!c) return null;
-  const d = 0.0005, list = await fetchNat(c.src, c.lot-d, c.lot+d, c.lat-d, c.lat+d);
+  const list = await natTile(c.src, Math.floor(c.lot/NAT_G), Math.floor(c.lat/NAT_G), !!force);
   let best = list.find(x => x.cctvId === id) || (natMeta[id] && list.find(x => x.instlPos === natMeta[id].instlPos));
   if (!best && list.length) best = list.sort((a,b)=>Math.hypot(a.lot-c.lot,a.lat-c.lat)-Math.hypot(b.lot-c.lot,b.lat-c.lat))[0];
   if (best) { Object.assign(c, { instlPos:best.instlPos, hlsAddr:best.hlsAddr }); }
@@ -408,12 +440,8 @@ function initMap(){
     for (let gx = Math.floor(b.getWest()/G); gx <= Math.floor(b.getEast()/G); gx++)
       for (let gy = Math.floor(b.getSouth()/G); gy <= Math.floor(b.getNorth()/G); gy++) {
         const k = gx+'_'+gy; if (loaded.has(k)) continue; loaded.add(k);
-        ['ex','its'].forEach(t => fetchNat(t, gx*G, (gx+1)*G, gy*G, (gy+1)*G)
-          .then(list => list.forEach(it => {
-            const c = nat.get(it.cctvId);
-            if (c) Object.assign(c, it); else nat.set(it.cctvId, it);
-            if (!markers.has(it.cctvId)) addMarker(nat.get(it.cctvId), natLayer);
-          }))
+        ['ex','its'].forEach(t => natTile(t, gx, gy)
+          .then(list => list.forEach(c => { if (!markers.has(c.cctvId)) addMarker(c, natLayer); }))
           .catch(() => loaded.delete(k)));
       }
   }
@@ -460,7 +488,7 @@ function openPreview(c, m){
     let retried = false;
     preview.hls.on(Hls.Events.ERROR, async (_,d) => { if (!d.fatal) return;
       if (c.src && !retried) { retried = true; msg.textContent = '다시 연결 중…';   // 고속도로·국도: 주소 새로 받아 한 번 더
-        try { await resolveNat(c.cctvId); if (preview.id === c.cctvId && preview.hls) { preview.hls.loadSource(c.hlsAddr); return; } } catch(e){} }
+        try { await resolveNat(c.cctvId, true); if (preview.id === c.cctvId && preview.hls) { preview.hls.loadSource(c.hlsAddr); return; } } catch(e){} }
       msg.textContent = '영상 신호 없음'; });
   } else v.src = c.hlsAddr;
   v.play().catch(()=>{});
@@ -574,8 +602,7 @@ async function loadNatAll(t){
   if (natAll[t] || natLoading[t]) return;
   natLoading[t] = true; renderList();
   try {
-    const list = await fetchNat(t, 124, 132, 33, 39);
-    natAll[t] = list.map(it => { const c = nat.get(it.cctvId); if (c) { Object.assign(c, it); return c; } nat.set(it.cctvId, it); return it; });
+    natAll[t] = await cachedNat('all:'+t, t, [124, 132, 33, 39]);
   } catch(e){ natAll[t] = []; toast('고속도로·국도 목록을 불러오지 못했어요.'); }
   natLoading[t] = false; renderList();
 }
@@ -753,7 +780,7 @@ function makeTile(c){
     p.hls && p.hls.destroy(); p.hls = null; msg.textContent='연결 중…'; msg.style.display='flex';
     // 고속도로·국도 CCTV: 영상 주소에 유효시간이 있어서 처음이거나 끊겼으면 새 주소를 받아 옴
     if (c.src && (!c.hlsAddr || p.failed)) {
-      try { await resolveNat(c.cctvId); el.querySelector('.bar span').textContent = c.instlPos; save(); } catch(e){}
+      try { await resolveNat(c.cctvId, p.failed); el.querySelector('.bar span').textContent = c.instlPos; save(); } catch(e){}
       if (players.get(c.cctvId) !== p) return;
     }
     if (c.src && !ITS_KEY) { msg.textContent='인증키를 넣으면 볼 수 있어요 (위쪽 "인증키 입력")'; return; }
@@ -1031,7 +1058,7 @@ async function locPlay(c){
   if (window.Hls && Hls.isSupported()) {
     const hl = new Hls({ liveSyncDurationCount:2 }); loc.hls = hl; hl.loadSource(c.hlsAddr); hl.attachMedia(v);
     hl.on(Hls.Events.ERROR, async (_,d) => { if (!d.fatal) return;
-      if (c.src && !retried) { retried = true; msg.textContent = '다시 연결 중…'; try { await resolveNat(c.cctvId); if (loc.hls === hl) { hl.loadSource(c.hlsAddr); return; } } catch(e){} }
+      if (c.src && !retried) { retried = true; msg.textContent = '다시 연결 중…'; try { await resolveNat(c.cctvId, true); if (loc.hls === hl) { hl.loadSource(c.hlsAddr); return; } } catch(e){} }
       msg.textContent = '영상 신호 없음'; });
   } else v.src = c.hlsAddr;
   v.play().catch(()=>{});
@@ -1058,8 +1085,7 @@ function locLoadNat(){ // 패널 지도에 보이는 지역의 고속도로·국
   for (let gx = Math.floor(b.getWest()/G); gx <= Math.floor(b.getEast()/G); gx++)
     for (let gy = Math.floor(b.getSouth()/G); gy <= Math.floor(b.getNorth()/G); gy++) {
       const k = gx+'_'+gy; if (loc.loaded.has(k)) continue; loc.loaded.add(k);
-      ['ex','its'].forEach(t => jobs.push(fetchNat(t, gx*G, (gx+1)*G, gy*G, (gy+1)*G)
-        .then(list => list.forEach(it => { const c = nat.get(it.cctvId); if (c) Object.assign(c, it); else nat.set(it.cctvId, it); }))
+      ['ex','its'].forEach(t => jobs.push(natTile(t, gx, gy)
         .catch(() => loc.loaded.delete(k))));
     }
   locDraw(); if (jobs.length) Promise.all(jobs).then(locDraw);
