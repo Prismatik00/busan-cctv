@@ -222,7 +222,7 @@ async function setItsKey(k){
   return true;
 }
 async function askItsKey(){
-  const k = await dialog({ title:'국가교통정보센터 인증키를 넣어 주세요. 이 기기에만 저장돼요.', value:ITS_KEY, okText:'저장',
+  const k = await dialog({ title:'국가교통정보센터 인증키를 넣어 주세요. 이 기기에만 저장돼요.', value:ITS_KEY, okText:'저장', maxLength:100,
     check: v => v && !/^[0-9a-f]{32}$/i.test(v) ? '보통 영문·숫자 32자예요.' : '' });
   if (!k) return;
   toast('인증키 확인 중…');
@@ -784,10 +784,10 @@ function applySettings(s){
   renderGrid(); renderList();
 }
 // 간단한 입력/확인 창 (브라우저 기본 팝업 대신)
-function dialog({ title, value=null, okText='확인', check=null }){
+function dialog({ title, value=null, okText='확인', check=null, maxLength=30 }){
   return new Promise(res => {
     $('#dlgTitle').textContent = title; $('#dlgOk').textContent = okText; $('#dlgNote').textContent = '';
-    const inp = $('#dlgInput'); inp.style.display = value === null ? 'none' : ''; inp.value = value || '';
+    const inp = $('#dlgInput'); inp.maxLength = maxLength; inp.style.display = value === null ? 'none' : ''; inp.value = value || '';
     $('#dlg').classList.add('show'); if (value !== null) setTimeout(() => { inp.focus(); inp.select(); }, 30);
     const upd = () => { if (check) $('#dlgNote').textContent = check(inp.value.trim()) || ''; };
     inp.oninput = upd; upd();
