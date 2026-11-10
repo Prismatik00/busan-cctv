@@ -69,7 +69,16 @@
   #navCount { display:none; position:fixed; top:calc(4vh - 30px); left:50%; transform:translateX(-50%); z-index:1600; color:#fff; font-size:13px; background:rgba(20,22,30,.7); padding:3px 10px; border-radius:10px; }
   #navCount.show { display:block; }
   #toast { z-index:3000; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#222838; padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
-  @media (max-width:760px){ body{flex-direction:column;height:auto;overflow:auto} aside{width:100%;max-height:45vh} }
+  @media (max-width:760px){
+    body{flex-direction:column;height:auto;overflow:auto}
+    aside{width:100% !important;max-height:none}
+    #map{flex:none;height:45vh;min-height:240px}
+    #list{flex:none;max-height:45vh}
+    #wide{display:none}
+    main{min-height:60vh}
+    #grid{overflow:visible}
+    .navbtn{width:40px;height:64px;line-height:64px;font-size:28px}
+  }
 </style>
 </head>
 <body>
