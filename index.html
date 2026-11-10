@@ -233,11 +233,13 @@ function updateKeyBtn(){ const b = $('#itsKey'); if (b) { b.textContent = ITS_KE
 const ITS_API = 'https://openapi.its.go.kr:9443/cctvInfo';
 const nat = new Map();   // id -> CCTV
 let natMeta = {}; try { natMeta = JSON.parse(localStorage.getItem(KEY+'-nat')) || {}; } catch(e){}
-const isNat = id => /^[ei]\d+_\d+$/.test(id);
-const natId = (t,x,y) => (t==='ex'?'e':'i') + Math.round(x*1e5) + '_' + Math.round(y*1e5);
+// ID = 종류 + 경도_위도 + 이름 짧은 해시 (같은 위치에 카메라가 여러 대 있는 곳이 있어서 이름도 포함)
+const isNat = id => /^[ei]\d+_\d+(_[0-9a-z]+)?$/.test(id);
+const nameHash = s => { let x = 5381; for (const ch of String(s)) x = ((x << 5) + x + ch.codePointAt(0)) >>> 0; return x.toString(36).slice(-4); };
+const natId = (t,x,y,name) => (t==='ex'?'e':'i') + Math.round(x*1e5) + '_' + Math.round(y*1e5) + '_' + nameHash(String(name||'').trim());
 function natItem(t, d){
   const x = +d.coordx, y = +d.coordy;
-  return { cctvId:natId(t,x,y), instlPos:String(d.cctvname||'').trim(), instlAddr:t==='ex'?'고속도로':'국도',
+  return { cctvId:natId(t,x,y,d.cctvname), instlPos:String(d.cctvname||'').trim(), instlAddr:t==='ex'?'고속도로':'국도',
            lat:y, lot:x, hlsAddr:String(d.cctvurl||'').replace(/^http:/,'https:'), src:t };
 }
 async function fetchNat(t, minX, maxX, minY, maxY){
@@ -248,7 +250,7 @@ async function fetchNat(t, minX, maxX, minY, maxY){
 }
 function ensureNat(id){ // 아직 지도에서 안 불러온 고속도로·국도 CCTV는 저장된 정보로 자리만 만들어 둠
   if (nat.has(id)) return nat.get(id);
-  const m = id.match(/^([ei])(\d+)_(\d+)$/); if (!m) return undefined;
+  const m = id.match(/^([ei])(\d+)_(\d+)/); if (!m) return undefined;
   const meta = natMeta[id] || {};
   const c = { cctvId:id, instlPos:meta.instlPos || '고속도로·국도 CCTV', instlAddr:meta.instlAddr || (m[1]==='e'?'고속도로':'국도'),
               lat:+m[3]/1e5, lot:+m[2]/1e5, hlsAddr:'', src:m[1]==='e'?'ex':'its' };
@@ -257,7 +259,7 @@ function ensureNat(id){ // 아직 지도에서 안 불러온 고속도로·국�
 async function resolveNat(id){ // 영상 주소(토큰 포함)를 새로 받아 옴
   const c = ensureNat(id); if (!c) return null;
   const d = 0.0005, list = await fetchNat(c.src, c.lot-d, c.lot+d, c.lat-d, c.lat+d);
-  let best = list.find(x => x.cctvId === id);
+  let best = list.find(x => x.cctvId === id) || (natMeta[id] && list.find(x => x.instlPos === natMeta[id].instlPos));
   if (!best && list.length) best = list.sort((a,b)=>Math.hypot(a.lot-c.lot,a.lat-c.lat)-Math.hypot(b.lot-c.lot,b.lat-c.lat))[0];
   if (best) { Object.assign(c, { instlPos:best.instlPos, hlsAddr:best.hlsAddr }); }
   return c;
