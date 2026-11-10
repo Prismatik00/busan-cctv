@@ -610,7 +610,7 @@ function decodeSettings(str){
 $('#presetQR').addEventListener('click', () => {
   const name = $('#preset').value || '공유 설정';
   const s = currentSettings(); // 지금 화면 그대로 보냄
-  const url = location.origin + location.pathname + '?s=' + encodeURIComponent(encodeSettings(name, s));
+  const url = location.origin + location.pathname + '?s=' + encodeSettings(name, s);
   $('#qrTitle').textContent = `"${name}" 설정 (${s.selected.length}개 CCTV)`;
   $('#qrLink').value = url;
   if (window.qrcode) { const q = qrcode(0, 'M'); q.addData(url); q.make(); $('#qrImg').innerHTML = q.createSvgTag({ cellSize:4, margin:2, scalable:true }); }
