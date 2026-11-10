@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>부산 CCTV 모아보기</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#272b35; --text:#e7e9ee; --muted:#8b91a0; --accent:#3d7bfd; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif; background:var(--bg); color:var(--text); display:flex; height:100vh; overflow:hidden; }
+  .tabs { display:flex; gap:4px; margin-top:10px; }
+  .tabs button { flex:1; padding:7px; }
+  .tabs button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #map { flex:1; min-height:300px; display:none; }
+  #map.show { display:block; }
+  #list.hide { display:none; }
+  .leaflet-tooltip { font-size:12px; }
+  #exportBox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2000; }
+  #exportBox.show { display:flex; }
+  #exportBox div { background:var(--panel); padding:16px; border-radius:10px; width:min(520px,92vw); }
+  #exportBox textarea { width:100%; height:180px; background:#0f1115; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13px; }
+  aside { width:380px; flex:none; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+  aside header { padding:14px 14px 8px; }
+  h1 { font-size:16px; margin:0 0 10px; }
+  input[type=search] { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:14px; }
+  .hint { font-size:12px; color:var(--muted); margin:8px 0 0; }
+  #list { overflow:auto; flex:1; padding:4px 6px 10px; }
+  .item { display:flex; gap:8px; align-items:flex-start; padding:7px 8px; border-radius:6px; cursor:pointer; font-size:13px; }
+  .item:hover { background:#1f2330; }
+  .item input { margin-top:2px; }
+  .item .name { flex:1; min-width:0; }
+  .item.sel { background:#1a2236; margin-bottom:3px; cursor:grab; }
+  .item .num { flex:none; width:20px; height:20px; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; margin-top:1px; }
+  .item .ord { flex:none; display:flex; gap:3px; }
+  .item .ord button { padding:3px 7px; font-size:11px; }
+  .sect { font-size:11px; color:var(--muted); margin:10px 8px 6px; }
+  .item small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+  main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .toolbar label { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  select, button { background:#0f1115; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 11px; font-size:13px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:hover { filter:brightness(1.15); }
+  #status { font-size:12px; color:var(--muted); margin-left:auto; }
+  #grid { flex:1; overflow:auto; padding:12px; display:grid; gap:10px; align-content:start; }
+  .tile { background:#000; border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative; }
+  .tile video { width:100%; aspect-ratio:4/3; display:block; background:#000; object-fit:contain; }
+  .tile .bar { display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--panel); font-size:13px; }
+  .tile .bar span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile .bar button { padding:4px 8px; font-size:12px; }
+  .tile .msg { position:absolute; inset:0 0 34px 0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; pointer-events:none; }
+  .empty { color:var(--muted); font-size:14px; padding:40px; text-align:center; grid-column:1/-1; }
+  .tile.dragging { opacity:.4; }
+  .tile video { cursor:zoom-in; }
+  .tile.big { position:fixed; inset:4vh 4vw; z-index:1500; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.6); }
+  .tile.big video { flex:1; aspect-ratio:auto; height:0; min-height:0; cursor:zoom-out; }
+  .tile.big .bar { font-size:15px; }
+  #backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:1400; }
+  #backdrop.show { display:block; }
+  .navbtn { display:none; position:fixed; top:50%; transform:translateY(-50%); z-index:1600; width:52px; height:80px; border:none; border-radius:10px;
+    background:rgba(20,22,30,.7); color:#fff; font-size:34px; line-height:80px; padding:0; cursor:pointer; }
+  .navbtn:hover { background:rgba(61,123,253,.85); }
+  .navbtn.show { display:block; }
+  #navPrev { left:max(4px, calc(4vw - 56px)); }
+  #navNext { right:max(4px, calc(4vw - 56px)); }
+  #navCount { display:none; position:fixed; top:calc(4vh - 30px); left:50%; transform:translateX(-50%); z-index:1600; color:#fff; font-size:13px; background:rgba(20,22,30,.7); padding:3px 10px; border-radius:10px; }
+  #navCount.show { display:block; }
+  #toast { z-index:3000; position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#222838; padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  @media (max-width:760px){ body{flex-direction:column;height:auto;overflow:auto} aside{width:100%;max-height:45vh} }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1>부산 CCTV 모아보기</h1>
+    <input id="q" type="search" placeholder="장소·주소 검색 (예: 서면, 해운대, 남천동)">
+    <p class="hint" id="count">CCTV 목록 불러오는 중…</p>
+    <div class="tabs"><button id="tabMap" class="on">지도</button><button id="tabList">목록</button><button id="wide" title="왼쪽 영역 넓히기/줄이기">지도 크게</button></div>
+  </header>
+  <div id="map" class="show"></div>
+  <div id="list" class="hide"></div>
+</aside>
+<main>
+  <div class="toolbar">
+    <label>열 <select id="cols"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
+    <button class="primary" id="capAll">전체 한 장으로 캡처</button>
+    <button id="capEach">각각 캡처</button>
+    <label>자동 캡처
+      <select id="auto">
+        <option value="0">끔</option><option value="1">1분</option><option value="5">5분</option><option value="10">10분</option><option value="30">30분</option><option value="60">60분</option>
+      </select>
+    </label>
+    <button id="clear">선택 비우기</button>
+    <button id="export">설정 복사</button>
+    <span id="status"></span>
+  </div>
+  <div id="grid"></div>
+</main>
+<div id="toast"></div>
+<div id="backdrop"></div>
+<button class="navbtn" id="navPrev" title="이전 CCTV (←)">‹</button>
+<button class="navbtn" id="navNext" title="다음 CCTV (→)">›</button>
+<div id="navCount"></div>
+<div id="exportBox"><div>
+  <p style="margin:0 0 8px;font-size:14px">지금 화면 설정이에요. 복사해서 Claude에게 붙여 넣으면 같은 화면으로 아침 캡처를 예약할 수 있어요.</p>
+  <textarea id="exportText" readonly></textarea>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;background:none;padding:0;width:auto">
+    <button class="primary" id="exportCopy">복사</button><button id="exportClose">닫기</button>
+  </div>
+</div></div>
+
+<script>
+const API = 'https://its.busan.go.kr/api-n/v1/bsits/user/cctvs';
+const KEY = 'busan-cctv-selected';
+let all = [];                 // 전체 CCTV 목록
+let selected = load();        // 선택된 cctvId 순서 배열
+const players = new Map();    // cctvId -> {hls, video, el}
+
+// 처음 여는 기기에서 보여줄 기본 구성 (모아보기 순서)
+const DEFAULT_SELECTED = ['CTV0000137','CTV0000519','CTV0000521','CTV0000525','CTV0000702','CTV0000706',
+  'CTV0000003','CTV0000051','CTV0000050','CTV0000052','CTV0000138','CTV0000034'];
+const DEFAULT_COLS = '3';
+function load(){
+  try { const v = localStorage.getItem(KEY); return v === null ? DEFAULT_SELECTED.slice() : (JSON.parse(v) || []); }
+  catch(e){ return DEFAULT_SELECTED.slice(); }
+}
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(selected)); } catch(e){} }
+const $ = s => document.querySelector(s);
+function toast(t){ const el=$('#toast'); el.textContent=t; el.style.opacity=1; clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.opacity=0,2200); }
+function stamp(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+function stampText(){ return new Date().toLocaleString('ko-KR'); }
+const byId = id => all.find(c => c.cctvId === id);
+
+async function init(){
+  try {
+    const res = await fetch(API);
+    all = await res.json();
+    all.sort((a,b)=>a.instlPos.localeCompare(b.instlPos,'ko'));
+    $('#count').textContent = `전체 ${all.length}개 · 체크해서 오른쪽에 추가`;
+  } catch(e){
+    $('#count').textContent = 'CCTV 목록을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.';
+    return;
+  }
+  selected = selected.filter(id => byId(id));
+  initMap();
+  renderList(); renderGrid();
+}
+
+// ---------- 지도 ----------
+let map = null; const markers = new Map();
+function markerStyle(on){
+  return on ? { radius:9, color:'#fff', weight:2, fillColor:'#ff4d4f', fillOpacity:1 }
+            : { radius:6, color:'#fff', weight:1, fillColor:'#3d7bfd', fillOpacity:.9 };
+}
+function initMap(){
+  if (!window.L) { $('#map').innerHTML='<p class="hint" style="padding:12px">지도를 불러오지 못했어요. 목록 탭을 이용해 주세요.</p>'; return; }
+  let view = { c:[35.16,129.06], z:11 };
+  try { view = JSON.parse(localStorage.getItem(KEY+'-view')) || view; } catch(e){}
+  map = L.map('map', { preferCanvas:true }).setView(view.c, view.z);
+  map.on('moveend', () => { try { const c=map.getCenter(); localStorage.setItem(KEY+'-view', JSON.stringify({ c:[+c.lat.toFixed(5), +c.lng.toFixed(5)], z:map.getZoom() })); } catch(e){} });
+  // 로컬 파일로 열면 리퍼러가 없어 tile.openstreetmap.org는 차단됨 → 리퍼러 없이도 되는 서버 사용
+  const street = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+    maxZoom:19, subdomains:'abc', attribution:'&copy; OpenStreetMap contributors, OSM France'
+  });
+  const street2 = L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
+    maxZoom:18, attribution:'&copy; OpenStreetMap contributors, OSM Deutschland'
+  });
+  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom:19, attribution:'Tiles &copy; Esri'
+  });
+  street2.addTo(map);
+  // 부산시 교통정보센터 소통정보 레이어 (사이트와 같은 색: 초록 25km/h 이상, 주황 15~25, 빨강 15 미만)
+  // 사이트와 같이 확대 단계별로 레이어 교체: 넓게 볼 땐 굵은 면, 중간엔 가는 면, 가까이 보면 선
+  const trafficLayerFor = z => z <= 12 ? 'bsits:vw_link2_poly_trfc' : z <= 14 ? 'bsits:vw_link1_poly_trfc' : 'bsits:vw_link1_line_trfc';
+  const traffic = L.tileLayer.wms('https://its.busan.go.kr/geoserver/bsits/wms', {
+    layers:trafficLayerFor(map.getZoom()), format:'image/png', transparent:true, version:'1.1.1',
+    env:'gradeType:trfc', trafficVersion:Date.now(), opacity:.8, attribution:'소통정보 &copy; 부산광역시 교통정보서비스센터'
+  }).addTo(map);
+  map.on('zoomend', () => { const l = trafficLayerFor(map.getZoom()); if (traffic.wmsParams.layers !== l) traffic.setParams({ layers:l }); });
+  setInterval(() => traffic.setParams({ trafficVersion:Date.now() }), 3*60000); // 3분마다 갱신
+  L.control.layers({ '일반 지도':street2, '일반 지도 (예비)':street, '위성':sat }, { '소통정보':traffic }, { position:'topright' }).addTo(map);
+  const legend = L.control({ position:'bottomright' });
+  legend.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText='background:rgba(255,255,255,.9);color:#222;padding:6px 8px;border-radius:6px;font-size:11px;line-height:1.6';
+    d.innerHTML = '<b>소통정보</b><br><span style="color:#1aa260">●</span> 25km/h 이상<br><span style="color:#f5a000">●</span> 15~25km/h<br><span style="color:#e03030">●</span> 15km/h 미만'; return d; };
+  legend.addTo(map);
+  all.forEach(c => {
+    if (!c.lat || !c.lot) return;
+    const m = L.circleMarker([c.lat, c.lot], markerStyle(selected.includes(c.cctvId)))
+      .bindTooltip(c.instlPos, { direction:'top', offset:[0,-6] })
+      .on('click', () => toggle(c.cctvId))
+      .addTo(map);
+    markers.set(c.cctvId, m);
+  });
+}
+function refreshMarkers(){
+  for (const [id,m] of markers) { const on = selected.includes(id); m.setStyle(markerStyle(on)); if (on) m.bringToFront(); }
+}
+function toggle(id){
+  const c = byId(id);
+  if (selected.includes(id)) { selected = selected.filter(x=>x!==id); toast(`빼기: ${c.instlPos}`); }
+  else { selected.push(id); toast(`추가: ${c.instlPos}`); }
+  save(); renderGrid(); renderList();
+}
+function showTab(which){
+  $('#tabMap').classList.toggle('on', which==='map'); $('#tabList').classList.toggle('on', which==='list');
+  $('#map').classList.toggle('show', which==='map'); $('#list').classList.toggle('hide', which!=='list');
+  if (which==='map' && map) setTimeout(()=>map.invalidateSize(), 50);
+}
+$('#tabMap').addEventListener('click', ()=>showTab('map'));
+$('#tabList').addEventListener('click', ()=>showTab('list'));
+function setWide(on){
+  document.querySelector('aside').style.width = on ? '50vw' : '';
+  $('#wide').textContent = on ? '지도 작게' : '지도 크게';
+  try { localStorage.setItem(KEY+'-wide', on?'1':''); } catch(e){}
+  if (map) setTimeout(()=>map.invalidateSize(), 50);
+}
+$('#wide').addEventListener('click', () => setWide(!document.querySelector('aside').style.width));
+try { if (localStorage.getItem(KEY+'-wide')) setTimeout(()=>setWide(true), 0); } catch(e){}
+// 검색하면 목록 탭으로 넘어가고, 지도도 결과 위치로 이동
+$('#q').addEventListener('input', () => {
+  const q = $('#q').value.trim().toLowerCase(); if (!q) return;
+  showTab('list');
+  if (map) { const hits = all.filter(c => (c.instlPos+' '+c.instlAddr).toLowerCase().includes(q) && c.lat);
+    if (hits.length) map.fitBounds(L.latLngBounds(hits.map(c=>[c.lat,c.lot])).pad(0.3), { maxZoom:16 }); }
+});
+
+// ---------- 설정 내보내기 ----------
+$('#export').addEventListener('click', () => {
+  const mv = map ? `${map.getCenter().lat.toFixed(5)},${map.getCenter().lng.toFixed(5)} 줌 ${map.getZoom()}` : '-';
+  const lines = [`[부산 CCTV 모아보기 설정]`, `열: ${$('#cols').value}`, `지도: ${mv}${document.querySelector('aside').style.width?' (크게)':''}`, `CCTV(순서대로):`]
+    .concat(selected.map((id,i)=>{ const c=byId(id); return `${i+1}. ${c.instlPos} (${id})`; }));
+  $('#exportText').value = lines.join('\n'); $('#exportBox').classList.add('show');
+});
+$('#exportCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#exportText').value); toast('복사됨'); }
+  catch(e){ $('#exportText').select(); document.execCommand('copy'); toast('복사됨'); }
+});
+$('#exportClose').addEventListener('click', () => $('#exportBox').classList.remove('show'));
+
+function renderList(){
+  const q = $('#q').value.trim().toLowerCase();
+  const match = c => !q || (c.instlPos+' '+c.instlAddr).toLowerCase().includes(q);
+  // 선택한 CCTV는 모아보기와 같은 순서로 위에, 나머지는 가나다순으로 아래에
+  const sel = selected.map(byId).filter(c => c && match(c));
+  const rest = all.filter(c => !selected.includes(c.cctvId) && match(c));
+  const row = (c, isSel) => `
+    <div class="item${isSel?' sel':''}" ${isSel?`draggable="true" data-sel="${c.cctvId}"`:''}>
+      ${isSel?`<span class="num">${selected.indexOf(c.cctvId)+1}</span>`:''}
+      <input type="checkbox" data-id="${c.cctvId}" ${isSel?'checked':''}>
+      <div class="name" data-toggle="${c.cctvId}">${c.instlPos}<small>${c.instlAddr||''}</small></div>
+      ${isSel?`<span class="ord"><button data-up="${c.cctvId}" title="앞으로">▲</button><button data-down="${c.cctvId}" title="뒤로">▼</button></span>`:''}
+    </div>`;
+  let html = '';
+  if (sel.length) html += `<p class="sect">선택한 CCTV · 모아보기 순서 (끌거나 ▲▼로 바꾸기)</p>` + sel.map(c=>row(c,true)).join('');
+  if (rest.length) html += `<p class="sect">전체 CCTV</p>` + rest.map(c=>row(c,false)).join('');
+  $('#list').innerHTML = html || '<p class="hint" style="padding:10px">검색 결과가 없어요.</p>';
+}
+function moveSel(id, to){ // to: 새 위치 index
+  const from = selected.indexOf(id); if (from < 0) return;
+  to = Math.max(0, Math.min(selected.length-1, to)); if (to === from) return;
+  selected.splice(from, 1); selected.splice(to, 0, id);
+  save(); renderGrid(); renderList();
+}
+$('#list').addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.up) { moveSel(t.dataset.up, selected.indexOf(t.dataset.up)-1); return; }
+  if (t.dataset.down) { moveSel(t.dataset.down, selected.indexOf(t.dataset.down)+1); return; }
+  const name = t.closest('[data-toggle]');
+  if (name) toggle(name.dataset.toggle);
+});
+// 목록에서 끌어서 순서 바꾸기 (PC)
+let dragSel = null;
+$('#list').addEventListener('dragstart', e => { const it = e.target.closest('[data-sel]'); if (it) { dragSel = it.dataset.sel; it.style.opacity=.4; } });
+$('#list').addEventListener('dragend', e => { dragSel = null; renderList(); });
+$('#list').addEventListener('dragover', e => { if (dragSel && e.target.closest('[data-sel]')) e.preventDefault(); });
+$('#list').addEventListener('drop', e => {
+  const it = e.target.closest('[data-sel]'); if (!dragSel || !it) return; e.preventDefault();
+  const r = it.getBoundingClientRect(), after = (e.clientY - r.top) > r.height/2;
+  let to = selected.indexOf(it.dataset.sel) + (after ? 1 : 0);
+  if (selected.indexOf(dragSel) < to) to--;
+  moveSel(dragSel, to);
+});
+
+$('#list').addEventListener('change', e => {
+  const id = e.target.dataset.id; if(!id) return;
+  if (e.target.checked) { if(!selected.includes(id)) selected.push(id); }
+  else selected = selected.filter(x => x !== id);
+  save(); renderGrid(); renderList();
+});
+$('#q').addEventListener('input', renderList);
+
+function setCols(){ $('#grid').style.gridTemplateColumns = `repeat(${$('#cols').value}, minmax(0,1fr))`; try{localStorage.setItem(KEY+'-cols',$('#cols').value)}catch(e){} }
+$('#cols').value = DEFAULT_COLS;
+try { const c = localStorage.getItem(KEY+'-cols'); if(c) $('#cols').value = c; } catch(e){}
+$('#cols').addEventListener('change', setCols); setCols();
+
+function renderGrid(){
+  const grid = $('#grid');
+  // 제거된 플레이어 정리
+  for (const [id,p] of players) if (!selected.includes(id)) { p.hls && p.hls.destroy(); p.el.remove(); players.delete(id); }
+  if (typeof refreshMarkers === 'function') refreshMarkers();
+  if (!selected.length) { grid.innerHTML = '<div class="empty">왼쪽 목록에서 보고 싶은 CCTV를 체크하세요.<br>선택은 이 브라우저에 저장돼서 다음에 열어도 그대로예요.</div>'; $('#status').textContent=''; return; }
+  grid.querySelector('.empty')?.remove();
+  selected.forEach(id => {
+    let p = players.get(id);
+    if (!p) p = makeTile(byId(id));
+    grid.appendChild(p.el); // 순서 맞추기
+  });
+  $('#status').textContent = `${selected.length}개 보는 중`;
+}
+
+function makeTile(c){
+  const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
+  el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
+    <div class="bar"><span title="${c.instlAddr||''}">${c.instlPos}</span>
+    <button data-act="cap">캡처</button><button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
+  const video = el.querySelector('video'), msg = el.querySelector('.msg');
+  const p = { el, video, hls:null, c };
+  const start = () => {
+    p.hls && p.hls.destroy(); msg.textContent='연결 중…'; msg.style.display='flex';
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({ liveSyncDurationCount:2, manifestLoadingMaxRetry:4, levelLoadingMaxRetry:4, fragLoadingMaxRetry:4 });
+      hls.loadSource(c.hlsAddr); hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) { msg.textContent='영상 연결 실패 · ↻ 눌러 재시도'; msg.style.display='flex'; } });
+      p.hls = hls;
+    } else { video.src = c.hlsAddr; } // Safari 기본 HLS (이 경우 캡처가 막힐 수 있음)
+    video.play().catch(()=>{});
+  };
+  video.addEventListener('playing', () => msg.style.display='none');
+  video.addEventListener('click', () => el.classList.contains('big') ? closeBig() : openBig(el));
+  el.querySelector('.bar').addEventListener('click', e => {
+    const act = e.target.dataset.act;
+    if (act==='cap') captureOne(p);
+    if (act==='reload') start();
+    if (act==='del') { closeBig(); selected = selected.filter(x=>x!==c.cctvId); save(); renderGrid(); renderList(); }
+  });
+  // 드래그로 순서 바꾸기
+  el.addEventListener('dragstart', () => el.classList.add('dragging'));
+  el.addEventListener('dragend', () => { el.classList.remove('dragging'); selected=[...document.querySelectorAll('#grid .tile')].map(t=>t.dataset.id); save(); renderList(); });
+  el.addEventListener('dragover', e => { e.preventDefault(); const d=document.querySelector('.tile.dragging'); if(!d||d===el) return;
+    const r=el.getBoundingClientRect(); const after = (e.clientX - r.left) > r.width/2;
+    el.parentNode.insertBefore(d, after ? el.nextSibling : el); });
+  start();
+  players.set(c.cctvId, p);
+  return p;
+}
+
+// ---------- 크게 보기 ----------
+const navEls = ['#backdrop','#navPrev','#navNext','#navCount'];
+function openBig(el){
+  closeBig(); el.classList.add('big'); el.draggable=false;
+  navEls.forEach(s=>$(s).classList.add('show'));
+  const tiles = [...document.querySelectorAll('#grid .tile')], i = tiles.indexOf(el);
+  $('#navCount').textContent = `${i+1} / ${tiles.length}`;
+  const multi = tiles.length > 1;
+  $('#navPrev').style.visibility = $('#navNext').style.visibility = multi ? 'visible' : 'hidden';
+}
+function closeBig(){ document.querySelectorAll('.tile.big').forEach(t=>{ t.classList.remove('big'); t.draggable=true; }); navEls.forEach(s=>$(s).classList.remove('show')); }
+function stepBig(d){
+  const cur = document.querySelector('.tile.big'); if (!cur) return;
+  const tiles = [...document.querySelectorAll('#grid .tile')]; if (tiles.length < 2) return;
+  const next = tiles[(tiles.indexOf(cur) + d + tiles.length) % tiles.length]; // 끝에서 처음으로 순환
+  openBig(next);
+}
+$('#navPrev').addEventListener('click', () => stepBig(-1));
+$('#navNext').addEventListener('click', () => stepBig(1));
+$('#backdrop').addEventListener('click', closeBig);
+document.addEventListener('keydown', e => {
+  if (!document.querySelector('.tile.big')) return;
+  if (e.key==='Escape') closeBig();
+  if (e.key==='ArrowLeft') stepBig(-1);
+  if (e.key==='ArrowRight') stepBig(1);
+});
+// 휴대폰: 크게 본 화면에서 좌우로 밀어서 넘기기
+let touchX = null;
+document.addEventListener('touchstart', e => { if (document.querySelector('.tile.big')) touchX = e.touches[0].clientX; }, { passive:true });
+document.addEventListener('touchend', e => {
+  if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; touchX = null;
+  if (Math.abs(dx) > 60) stepBig(dx < 0 ? 1 : -1);
+}, { passive:true });
+
+// 영상 한 프레임 + 이름/시각을 캔버스에 그리기
+const SCALE = 2; // 원본이 320x240이라 2배로 키워 저장
+function drawFrame(ctx, p, x, y, w, h){
+  ctx.fillStyle='#000'; ctx.fillRect(x,y,w,h);
+  const v=p.video;
+  if (v.videoWidth) ctx.drawImage(v, x, y, w, h);
+  else { ctx.fillStyle='#888'; ctx.font=`${14*SCALE/2+6}px sans-serif`; ctx.fillText('영상 없음', x+12, y+h/2); }
+  const label = `${p.c.instlPos}  ·  ${stampText()}`;
+  ctx.font = `bold ${Math.round(w/32)}px sans-serif`;
+  const pad = Math.round(w/80), th = Math.round(w/32)+pad*2;
+  ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(x, y+h-th, w, th);
+  ctx.fillStyle='#fff'; ctx.textBaseline='middle'; ctx.fillText(label, x+pad, y+h-th/2);
+}
+function download(canvas, name){
+  canvas.toBlob(b => { const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }, 'image/png');
+}
+function safe(s){ return s.replace(/[\\/:*?"<>|\s]+/g,'_'); }
+function captureOne(p){
+  const w=(p.video.videoWidth||320)*SCALE, h=(p.video.videoHeight||240)*SCALE;
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  try { drawFrame(cv.getContext('2d'), p, 0, 0, w, h); download(cv, `CCTV_${safe(p.c.instlPos)}_${stamp()}.png`); }
+  catch(e){ toast('이 브라우저에서는 캡처가 막혀 있어요. 크롬이나 엣지로 열어 주세요.'); }
+}
+function captureAll(){
+  const list = selected.map(id=>players.get(id)).filter(Boolean);
+  if (!list.length) { toast('선택된 CCTV가 없어요.'); return; }
+  const cols = Math.min(+$('#cols').value, list.length), rows = Math.ceil(list.length/cols);
+  const w=320*SCALE, h=240*SCALE, gap=8;
+  const cv=document.createElement('canvas'); cv.width=cols*w+(cols-1)*gap; cv.height=rows*h+(rows-1)*gap;
+  const ctx=cv.getContext('2d'); ctx.fillStyle='#111'; ctx.fillRect(0,0,cv.width,cv.height);
+  try {
+    list.forEach((p,i)=> drawFrame(ctx, p, (i%cols)*(w+gap), Math.floor(i/cols)*(h+gap), w, h));
+    download(cv, `CCTV_모아보기_${stamp()}.png`); toast('캡처 저장됨');
+  } catch(e){ toast('이 브라우저에서는 캡처가 막혀 있어요. 크롬이나 엣지로 열어 주세요.'); }
+}
+$('#capAll').addEventListener('click', captureAll);
+$('#capEach').addEventListener('click', () => { selected.forEach((id,i)=>setTimeout(()=>captureOne(players.get(id)), i*350)); });
+$('#clear').addEventListener('click', () => { selected=[]; save(); renderGrid(); renderList(); });
+
+let autoTimer=null;
+$('#auto').addEventListener('change', () => {
+  clearInterval(autoTimer); const m=+$('#auto').value;
+  if (m) { autoTimer=setInterval(captureAll, m*60000); toast(`${m}분마다 전체 캡처를 저장해요 (이 창을 열어 두세요)`); }
+});
+
+init();
+</script>
+</body>
+</html>
