@@ -19,6 +19,8 @@
   #map.show { display:block; }
   #list.hide { display:none; }
   .leaflet-tooltip { font-size:12px; }
+  .nat-toggle { background:#fff; color:#333; border:2px solid rgba(0,0,0,.2); border-radius:6px; padding:5px 8px; font-size:12px; font-weight:600; cursor:pointer; }
+  .nat-toggle.on { background:#263049; color:#fff; border-color:#3d7bfd; }
   .nat-hint { background:rgba(23,26,33,.85); color:#fff; font-size:11px; padding:5px 8px; border-radius:6px; }
   .pv { position:fixed; z-index:1300; width:260px; background:#171a21; color:#e7e9ee; border:1px solid #2c3240; border-radius:10px; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,.5); cursor:pointer; }
   .pv-x { float:right; color:#aaa; padding:0 4px; cursor:pointer; }
@@ -254,6 +256,8 @@ function save(){
 // 인증키는 코드에 넣지 않고, 각 기기 브라우저에만 저장 (공개 페이지라서)
 let ITS_KEY = ''; try { ITS_KEY = localStorage.getItem(KEY+'-itskey') || ''; } catch(e){}
 let natReload = () => {};
+let natOn = false; try { natOn = localStorage.getItem(KEY+'-natOn') === '1'; } catch(e){}
+let setNatOn = () => {};
 async function setItsKey(k){
   k = (k||'').trim(); if (!k) return false;
   // 키가 맞는지 작은 범위로 한 번 확인
@@ -371,10 +375,21 @@ function initMap(){
   legend.onAdd = () => { const d = L.DomUtil.create('div'); d.style.cssText='background:rgba(255,255,255,.9);color:#222;padding:6px 8px;border-radius:6px;font-size:11px;line-height:1.6';
     d.innerHTML = '<b>CCTV</b><br><span style="color:#3d7bfd">●</span> 부산시 <span style="color:#f08c00">●</span> 고속도로 <span style="color:#2f9e44">●</span> 국도<br><b>소통정보</b> (부산)<br><span style="color:#1aa260">●</span> 25km/h 이상<br><span style="color:#f5a000">●</span> 15~25km/h<br><span style="color:#e03030">●</span> 15km/h 미만'; return d; };
   legend.addTo(map);
-  const busanLayer = L.layerGroup().addTo(map), natLayer = L.layerGroup().addTo(map);
+  const busanLayer = L.layerGroup().addTo(map), natLayer = L.layerGroup();
+  if (natOn) natLayer.addTo(map); // 고속도로·국도는 버튼으로 켤 때만 (API 호출 아끼려고 기본은 꺼 둠)
   all.forEach(c => { if (c.lat && c.lot) addMarker(c, busanLayer); });
   layersCtl.addOverlay(busanLayer, '<span style="color:#3d7bfd">●</span> 부산시 CCTV');
-  layersCtl.addOverlay(natLayer, '<span style="color:#f08c00">●</span> 고속도로 · <span style="color:#2f9e44">●</span> 국도 CCTV');
+  // 지도 왼쪽 위 "고속도로·국도" 켜고 끄기 버튼
+  const natBtn = L.control({ position:'topleft' });
+  natBtn.onAdd = () => { const b = L.DomUtil.create('button','nat-toggle'); b.title = '고속도로·국도 CCTV 표시 (켤 때만 국가교통정보센터 API를 써요)';
+    L.DomEvent.disableClickPropagation(b); b.onclick = () => setNatOn(!natOn); return b; };
+  natBtn.addTo(map);
+  const paintNatBtn = () => { const b = document.querySelector('.nat-toggle'); if (!b) return;
+    b.classList.toggle('on', natOn); b.innerHTML = `<span style="color:#f08c00">●</span><span style="color:#2f9e44">●</span> 고속도로·국도 ${natOn ? '켬' : '끔'}`; };
+  setNatOn = on => { natOn = on; try { localStorage.setItem(KEY+'-natOn', on ? '1' : ''); } catch(e){}
+    if (on) natLayer.addTo(map); else { natLayer.remove(); closePreview(); }
+    paintNatBtn(); loadNatView(); };
+  paintNatBtn();
   // 고속도로·국도 CCTV는 지금 보고 있는 지역만 불러옴 (전국은 1만 개가 넘어서)
   const loaded = new Set(), G = 0.5;
   const hint = L.control({ position:'topright' });
@@ -403,7 +418,7 @@ function initMap(){
       }
   }
   let natTimer = null;
-  map.on('moveend overlayadd overlayremove', () => { clearTimeout(natTimer); natTimer = setTimeout(loadNatView, 250); });
+  map.on('moveend', () => { clearTimeout(natTimer); natTimer = setTimeout(loadNatView, 250); });
   natReload = () => { loaded.clear(); hint.remove(); loadNatView(); };
   loadNatView();
   map.on('zoomstart movestart', () => { if (!preview.touchOpen) closePreview(); });
@@ -1038,7 +1053,7 @@ function locDraw(){ // 지금 보이는 범위의 CCTV만 점으로 그림
   locRefresh();
 }
 function locLoadNat(){ // 패널 지도에 보이는 지역의 고속도로·국도 CCTV 불러오기
-  if (!ITS_KEY || !loc.map || loc.map.getZoom() < 10) { locDraw(); return; }
+  if (!ITS_KEY || !loc.map || loc.map.getZoom() < 10 || !(natOn || (loc.c && loc.c.src))) { locDraw(); return; }
   const b = loc.map.getBounds(), G = 0.5; const jobs = [];
   for (let gx = Math.floor(b.getWest()/G); gx <= Math.floor(b.getEast()/G); gx++)
     for (let gy = Math.floor(b.getSouth()/G); gy <= Math.floor(b.getNorth()/G); gy++) {
