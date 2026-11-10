@@ -38,8 +38,13 @@
   .item .handle { flex:none; align-self:center; font-size:20px; line-height:1; padding:6px 10px; margin:-6px -4px -6px 0; color:var(--muted);
     cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; border-radius:6px; }
   .item .handle:hover { color:var(--text); background:#263049; }
-  .item.dragging { background:#2a3a63; box-shadow:0 4px 14px rgba(0,0,0,.5); position:relative; z-index:2; }
-  .item.dragging .handle { cursor:grabbing; color:#fff; }
+  #list { position:relative; }
+  .item.placeholder { background:transparent; outline:2px dashed #3d7bfd; outline-offset:-2px; }
+  .item.placeholder > * { visibility:hidden; }
+  .item.ghost { position:fixed; z-index:2500; margin:0; pointer-events:none; opacity:.85; background:#2a3a63;
+    box-shadow:0 10px 28px rgba(0,0,0,.55); transform:scale(1.02); cursor:grabbing; }
+  .item.ghost .handle { color:#fff; }
+  body.dragging-list, body.dragging-list * { cursor:grabbing !important; user-select:none; }
   .sect { font-size:11px; color:var(--muted); margin:10px 8px 6px; }
   .item small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
   main { flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -282,45 +287,70 @@ $('#list').addEventListener('click', e => {
   if (name) toggle(name.dataset.toggle);
 });
 // 목록에서 ≡ 를 잡고 끌어서 순서 바꾸기 (마우스·터치 공통)
+// 잡은 항목은 반투명 잔상(ghost)이 손가락을 따라오고, 원래 자리는 빈 칸(미리보기)으로 바뀌어 놓일 위치를 보여줌
 let drag = null;
-$('#list').addEventListener('pointerdown', e => {
+const listEl = () => $('#list');
+function selItems(){ return [...document.querySelectorAll('#list [data-sel]')]; }
+// 다른 항목이 부드럽게 밀려나도록 (FLIP 애니메이션)
+function animateShift(mutate){
+  const items = selItems().filter(x => x !== drag.it);
+  const before = new Map(items.map(x => [x, x.offsetTop]));
+  mutate();
+  items.forEach(x => {
+    const dy = before.get(x) - x.offsetTop; if (!dy) return;
+    x.style.transition = 'none'; x.style.transform = `translateY(${dy}px)`;
+    requestAnimationFrame(() => { x.style.transition = 'transform .16s ease'; x.style.transform = ''; });
+  });
+}
+listEl().addEventListener('pointerdown', e => {
   const h = e.target.closest('.handle'); if (!h) return;
   e.preventDefault();
-  const it = h.closest('[data-sel]');
-  drag = { it, id:it.dataset.sel, pid:e.pointerId, scroll:null, y:e.clientY };
+  const it = h.closest('[data-sel]'), r = it.getBoundingClientRect();
+  const ghost = it.cloneNode(true);
+  ghost.classList.add('ghost');
+  Object.assign(ghost.style, { width:r.width+'px', left:r.left+'px', top:r.top+'px' });
+  document.body.appendChild(ghost);
+  drag = { it, ghost, pid:e.pointerId, scroll:null, y:e.clientY, grab:e.clientY - r.top, h:r.height };
   h.setPointerCapture(e.pointerId);
-  it.classList.add('dragging');
+  it.classList.add('placeholder');
 });
 function dragMove(y){
   if (!drag) return;
   drag.y = y;
-  const items = [...document.querySelectorAll('#list [data-sel]')].filter(x => x !== drag.it);
-  let placed = false;
-  for (const x of items) {
-    const r = x.getBoundingClientRect();
-    if (y < r.top + r.height/2) { if (drag.it.nextElementSibling !== x) x.before(drag.it); placed = true; break; }
-  }
-  if (!placed && items.length) { const last = items[items.length-1]; if (last.nextElementSibling !== drag.it) last.after(drag.it); }
+  drag.ghost.style.top = (y - drag.grab) + 'px';
+  // 잔상의 가운데가 어느 항목의 절반을 넘었는지로 놓일 자리 결정
+  const L = listEl(), lr = L.getBoundingClientRect();
+  const center = (y - drag.grab + drag.h/2) - lr.top + L.scrollTop;
+  const others = selItems().filter(x => x !== drag.it);
+  let target = null;
+  for (const x of others) { if (center < x.offsetTop + x.offsetHeight/2) { target = x; break; } }
+  const needMove = target ? drag.it.nextElementSibling !== target : (others.length && others[others.length-1].nextElementSibling !== drag.it);
+  if (needMove) animateShift(() => target ? target.before(drag.it) : others[others.length-1].after(drag.it));
   // 목록 위·아래 끝에 가까우면 자동 스크롤
-  const lr = $('#list').getBoundingClientRect(), edge = 40;
-  const v = y < lr.top + edge ? -8 : y > lr.bottom - edge ? 8 : 0;
-  clearInterval(drag.scroll); drag.scroll = v ? setInterval(() => { $('#list').scrollTop += v; dragMove(drag.y); }, 30) : null;
+  const edge = 40, v = y < lr.top + edge ? -8 : y > lr.bottom - edge ? 8 : 0;
+  clearInterval(drag.scroll); drag.scroll = v ? setInterval(() => { L.scrollTop += v; dragMove(drag.y); }, 30) : null;
 }
-$('#list').addEventListener('pointermove', e => { if (drag && e.pointerId === drag.pid) dragMove(e.clientY); });
+listEl().addEventListener('pointermove', e => { if (drag && e.pointerId === drag.pid) dragMove(e.clientY); });
 function dragEnd(e){
   if (!drag || (e && e.pointerId !== drag.pid)) return;
-  clearInterval(drag.scroll); drag.it.classList.remove('dragging');
-  // 화면에 보이는 선택 항목의 새 순서를 원래 자리들에 다시 채워 넣기 (검색 중일 때도 안전)
-  const shown = [...document.querySelectorAll('#list [data-sel]')].map(x => x.dataset.sel);
-  const slots = selected.map((id,i) => shown.includes(id) ? i : -1).filter(i => i >= 0);
-  const next = selected.slice(); slots.forEach((slot,k) => next[slot] = shown[k]);
-  const changed = next.join() !== selected.join();
-  drag = null;
-  if (changed) { selected = next; save(); renderGrid(); }
-  renderList();
+  clearInterval(drag.scroll);
+  const d = drag; drag = null;
+  // 잔상이 빈 칸으로 쏙 들어가는 마무리 애니메이션
+  const r = d.it.getBoundingClientRect();
+  d.ghost.style.transition = 'top .15s ease, opacity .15s ease, box-shadow .15s ease';
+  d.ghost.style.top = r.top + 'px'; d.ghost.style.boxShadow = 'none';
+  setTimeout(() => {
+    d.ghost.remove(); d.it.classList.remove('placeholder');
+    // 화면에 보이는 선택 항목의 새 순서를 원래 자리들에 다시 채워 넣기 (검색 중일 때도 안전)
+    const shown = selItems().map(x => x.dataset.sel);
+    const slots = selected.map((id,i) => shown.includes(id) ? i : -1).filter(i => i >= 0);
+    const next = selected.slice(); slots.forEach((slot,k) => next[slot] = shown[k]);
+    if (next.join() !== selected.join()) { selected = next; save(); renderGrid(); }
+    renderList();
+  }, 160);
 }
-$('#list').addEventListener('pointerup', dragEnd);
-$('#list').addEventListener('pointercancel', dragEnd);
+listEl().addEventListener('pointerup', dragEnd);
+listEl().addEventListener('pointercancel', dragEnd);
 
 $('#list').addEventListener('change', e => {
   const id = e.target.dataset.id; if(!id) return;
