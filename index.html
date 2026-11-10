@@ -19,6 +19,17 @@
   #map.show { display:block; }
   #list.hide { display:none; }
   .leaflet-tooltip { font-size:12px; }
+  .pv-popup .leaflet-popup-content-wrapper { background:#171a21; color:#e7e9ee; border-radius:10px; padding:0; }
+  .pv-popup .leaflet-popup-content { margin:8px; width:260px !important; }
+  .pv-popup .leaflet-popup-tip { background:#171a21; }
+  .pv-popup a.leaflet-popup-close-button { color:#ccc; }
+  .pv { cursor:pointer; }
+  .pv-name { font-size:13px; font-weight:600; margin:0 18px 6px 2px; }
+  .pv-vid { position:relative; background:#000; border-radius:6px; overflow:hidden; }
+  .pv-vid video { width:100%; aspect-ratio:16/9; object-fit:fill; display:block; }
+  .pv-msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#8b91a0; font-size:12px; }
+  .pv-btn { width:100%; margin-top:6px; background:#3d7bfd; border-color:#3d7bfd; color:#fff; font-size:12px; padding:6px; }
+  .pv-btn.on { background:#2a2f3a; border-color:#3a4050; color:#ffb0b0; }
   .preset { display:inline-flex; gap:0; }
   .preset select { border-radius:8px 0 0 8px; max-width:180px; }
   .preset button { border-radius:0 8px 8px 0; border-left:none; color:#ff8a8a; }
@@ -247,13 +258,60 @@ function initMap(){
   legend.addTo(map);
   all.forEach(c => {
     if (!c.lat || !c.lot) return;
-    const m = L.circleMarker([c.lat, c.lot], markerStyle(selected.includes(c.cctvId)))
-      .bindTooltip(c.instlPos, { direction:'top', offset:[0,-6] })
-      .on('click', () => toggle(c.cctvId))
-      .addTo(map);
+    const m = L.circleMarker([c.lat, c.lot], markerStyle(selected.includes(c.cctvId))).addTo(map);
+    // PC: 올리면 미리보기, 클릭하면 추가/빼기 · 휴대폰: 누르면 미리보기, 미리보기를 누르면 추가/빼기
+    m.on('mouseover', e => { if (!isTouch(e)) openPreview(c, m); });
+    m.on('mouseout', e => { if (!isTouch(e)) schedulePreviewClose(); });
+    m.on('click', e => {
+      if (isTouch(e)) { if (preview.id === c.cctvId) toggle(c.cctvId); else openPreview(c, m); }
+      else toggle(c.cctvId);
+    });
     markers.set(c.cctvId, m);
   });
+  map.on('zoomstart movestart', () => { if (!preview.touchOpen) closePreview(); });
 }
+// ---------- 지도 위 CCTV 미리보기 (실시간 영상) ----------
+const hoverNone = window.matchMedia && matchMedia('(hover: none)').matches;
+function isTouch(e){ const o = e && e.originalEvent; return hoverNone || (o && (o.pointerType === 'touch' || (o.sourceCapabilities && o.sourceCapabilities.firesTouchEvents))); }
+const preview = { id:null, hls:null, popup:null, timer:null, touchOpen:false };
+function previewHtml(c){
+  const on = selected.includes(c.cctvId);
+  return `<div class="pv" data-pv="${c.cctvId}">
+    <div class="pv-name">${c.instlPos}</div>
+    <div class="pv-vid"><video muted playsinline autoplay></video><span class="pv-msg">연결 중…</span></div>
+    <button class="pv-btn ${on?'on':''}">${on ? '✓ 모아보기에 있음 · 눌러서 빼기' : '+ 모아보기에 추가'}</button>
+  </div>`;
+}
+function openPreview(c, m){
+  clearTimeout(preview.timer);
+  if (preview.id === c.cctvId && preview.popup && map.hasLayer(preview.popup)) return;
+  closePreview();
+  preview.id = c.cctvId; preview.touchOpen = hoverNone;
+  preview.popup = L.popup({ closeButton:hoverNone, autoPan:hoverNone, offset:[0,-4], className:'pv-popup', maxWidth:300, minWidth:240 })
+    .setLatLng(m.getLatLng()).setContent(previewHtml(c)).openOn(map);
+  const box = preview.popup.getElement();
+  const v = box.querySelector('video'), msg = box.querySelector('.pv-msg');
+  v.addEventListener('playing', () => msg.style.display = 'none');
+  if (window.Hls && Hls.isSupported()) {
+    preview.hls = new Hls({ liveSyncDurationCount:2 }); preview.hls.loadSource(c.hlsAddr); preview.hls.attachMedia(v);
+    preview.hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) msg.textContent = '영상 신호 없음'; });
+  } else v.src = c.hlsAddr;
+  v.play().catch(()=>{});
+  // 미리보기 위에 마우스가 있으면 닫지 않음, 미리보기를 누르면 추가/빼기
+  box.addEventListener('mouseenter', () => clearTimeout(preview.timer));
+  box.addEventListener('mouseleave', () => { if (!hoverNone) schedulePreviewClose(); });
+  box.querySelector('.pv').addEventListener('click', e => { e.stopPropagation(); toggle(c.cctvId); });
+  preview.popup.on('remove', () => { if (preview.popup && !map.hasLayer(preview.popup)) cleanupPreview(); });
+}
+function updatePreview(){
+  if (!preview.popup || !preview.id) return;
+  const el = preview.popup.getElement(); if (!el) return;
+  const on = selected.includes(preview.id), b = el.querySelector('.pv-btn');
+  b.classList.toggle('on', on); b.textContent = on ? '✓ 모아보기에 있음 · 눌러서 빼기' : '+ 모아보기에 추가';
+}
+function schedulePreviewClose(){ clearTimeout(preview.timer); preview.timer = setTimeout(closePreview, 250); }
+function cleanupPreview(){ if (preview.hls) { preview.hls.destroy(); preview.hls = null; } preview.id = null; preview.popup = null; }
+function closePreview(){ clearTimeout(preview.timer); const p = preview.popup; cleanupPreview(); if (p && map) map.closePopup(p); }
 function refreshMarkers(){
   for (const [id,m] of markers) { const on = selected.includes(id); m.setStyle(markerStyle(on)); if (on) m.bringToFront(); }
 }
@@ -261,7 +319,7 @@ function toggle(id){
   const c = byId(id);
   if (selected.includes(id)) { selected = selected.filter(x=>x!==id); toast(`빼기: ${c.instlPos}`); }
   else { selected.push(id); toast(`추가: ${c.instlPos}`); }
-  save(); renderGrid(); renderList();
+  save(); renderGrid(); renderList(); updatePreview();
 }
 function showTab(which){
   $('#tabMap').classList.toggle('on', which==='map'); $('#tabList').classList.toggle('on', which==='list');
