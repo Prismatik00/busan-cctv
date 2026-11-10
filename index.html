@@ -102,6 +102,16 @@
   .road .arr { color:var(--muted); width:12px; }
   .road-items { padding-left:10px; border-left:2px solid #263049; margin:2px 0 8px 14px; }
   .item .seq { flex:none; color:var(--muted); font-size:11px; width:22px; text-align:right; margin-top:2px; }
+  a.nv { flex:none; display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px; padding:0 5px; border-radius:5px;
+    background:#03c75a; color:#fff; font:700 12px/1 sans-serif; text-decoration:none; }
+  a.nv:hover { filter:brightness(1.1); }
+  .tile .bar a.nv { height:24px; }
+  .item a.nv { margin-top:1px; }
+  .loc-head a.nv { margin-left:auto; height:26px; padding:0 8px; font-size:12px; }
+  .loc-head a.nv + button { margin-left:0; }
+  .pv-row { display:flex; gap:6px; align-items:stretch; margin-top:6px; }
+  .pv-row .pv-btn { margin-top:0; flex:1; }
+  .pv-row a.nv { height:auto; padding:0 9px; }
   .item .go { flex:none; background:none; border:none; padding:0 4px; font-size:13px; cursor:pointer; opacity:.7; }
   .item .go:hover { opacity:1; }
   .sect { font-size:11px; color:var(--muted); margin:10px 8px 6px; }
@@ -186,7 +196,7 @@
 </main>
 <div id="toast"></div>
 <div id="loc">
-  <div class="loc-head"><b id="locName"></b><small id="locAddr"></small><button id="locClose" title="닫기">✕</button></div>
+  <div class="loc-head"><b id="locName"></b><small id="locAddr"></small><a id="locNaver" class="nv" target="_blank" rel="noopener" title="네이버 지도에서 이 위치 보기">N 지도</a><button id="locClose" title="닫기">✕</button></div>
   <div class="loc-vid"><video muted playsinline autoplay></video><span id="locMsg">연결 중…</span></div>
   <div class="loc-bar"><button id="locAdd" class="primary"></button><span class="hint">지도의 점을 누르면 그 CCTV로 바뀌어요</span></div>
   <div id="locMap"></div>
@@ -303,6 +313,9 @@ const $ = s => document.querySelector(s);
 function toast(t){ const el=$('#toast'); el.textContent=t; el.style.opacity=1; clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.opacity=0,2200); }
 function stamp(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
 function stampText(){ return new Date().toLocaleString('ko-KR'); }
+// 네이버 지도에서 그 위치 보기 (새 탭)
+const naverUrl = c => `https://map.naver.com/p?c=${(+c.lot).toFixed(6)},${(+c.lat).toFixed(6)},17,0,0,0,dh`;
+const naverBtn = c => c && c.lat ? `<a class="nv" href="${naverUrl(c)}" target="_blank" rel="noopener" title="네이버 지도에서 이 위치 보기">N</a>` : '';
 const byId = id => all.find(c => c.cctvId === id) || nat.get(id) || (isNat(id) ? ensureNat(id) : undefined);
 
 async function init(){
@@ -422,7 +435,7 @@ function openPreview(c, m){
   const el = document.createElement('div'); el.className = 'pv';
   el.innerHTML = `<div class="pv-name">${c.instlPos}${hoverNone?'<span class="pv-x">✕</span>':''}</div>
     <div class="pv-vid"><video muted playsinline autoplay></video><span class="pv-msg">연결 중…</span></div>
-    <button class="pv-btn ${on?'on':''}">${txt}</button>`;
+    <div class="pv-row"><button class="pv-btn ${on?'on':''}">${txt}</button>${naverBtn(c)}</div>`;
   document.body.appendChild(el);
   Object.assign(preview, { id:c.cctvId, el, m, touchOpen:hoverNone });
   placePreview();
@@ -576,7 +589,7 @@ function renderRoads(t, q){
           <span class="seq">${i+1}</span>
           <input type="checkbox" data-id="${c.cctvId}" ${selected.includes(c.cctvId)?'checked':''}>
           <div class="name" data-toggle="${c.cctvId}">${c.instlPos.replace(/^\s*\[[^\]]+\]\s*/,'')}</div>
-          <button class="go" data-go="${c.cctvId}" title="지도에서 보기">📍</button>
+          <button class="go" data-go="${c.cctvId}" title="오른쪽에 지도와 영상 보기">📍</button>${naverBtn(c)}
         </div>`).join('') + '</div>';
     }
   }
@@ -599,6 +612,7 @@ function renderList(){
       ${isSel?`<span class="num">${selected.indexOf(c.cctvId)+1}</span>`:''}
       <input type="checkbox" data-id="${c.cctvId}" ${isSel?'checked':''}>
       <div class="name" data-toggle="${c.cctvId}">${c.instlPos}<small>${c.instlAddr||''}</small></div>
+      <button class="go" data-go="${c.cctvId}" title="오른쪽에 지도와 영상 보기">📍</button>${naverBtn(c)}
       ${isSel?`<span class="handle" title="끌어서 순서 바꾸기">≡</span>`:''}
     </div>`;
   let html = '';
@@ -718,7 +732,7 @@ function makeTile(c){
   const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
     <div class="bar"><span title="${c.instlAddr||''}">${c.instlPos}</span>
-    <button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
+    ${naverBtn(c)}<button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
   const start = async () => {
@@ -787,7 +801,7 @@ function openPreviewBig(c){
   closeBig();
   const el = document.createElement('div'); el.className = 'tile big temp';
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
-    <div class="bar"><span>${c.instlPos}</span><button class="primary" data-act="add">+ 모아보기에 추가</button><button data-act="close" title="닫기">✕</button></div>`;
+    <div class="bar"><span>${c.instlPos}</span>${naverBtn(c)}<button class="primary" data-act="add">+ 모아보기에 추가</button><button data-act="close" title="닫기">✕</button></div>`;
   document.body.appendChild(el);
   const v = el.querySelector('video'), msg = el.querySelector('.msg');
   v.addEventListener('playing', () => msg.style.display='none');
@@ -993,7 +1007,7 @@ function locRefresh(){ // 선택 상태가 바뀌면 버튼·점 색 갱신
   locBtn(); for (const [id,m] of loc.marks) { const c = byId(id); if (c) { m.setStyle(locStyle(c)); if (loc.c && id === loc.c.cctvId) m.setStyle({ radius:11, weight:3, color:'#ffd43b' }); } }
 }
 async function locPlay(c){
-  loc.c = c; $('#locName').textContent = c.instlPos; $('#locAddr').textContent = c.instlAddr || ''; locBtn();
+  loc.c = c; $('#locNaver').href = naverUrl(c); $('#locName').textContent = c.instlPos; $('#locAddr').textContent = c.instlAddr || ''; locBtn();
   const v = document.querySelector('.loc-vid video'), msg = $('#locMsg'); msg.style.display = 'flex'; msg.textContent = '연결 중…';
   if (loc.hls) { loc.hls.destroy(); loc.hls = null; }
   if (c.src) { if (!ITS_KEY) { msg.textContent = '인증키를 넣으면 볼 수 있어요'; return; }
