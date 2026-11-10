@@ -66,17 +66,20 @@
   button:hover { filter:brightness(1.15); }
   #status { font-size:12px; color:var(--muted); margin-left:auto; }
   #grid { flex:1; overflow:auto; padding:12px; display:grid; gap:10px; align-content:start; }
-  .tile { background:#000; border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative; }
-  .tile video { width:100%; aspect-ratio:4/3; display:block; background:#000; object-fit:contain; }
-  .tile .bar { display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--panel); font-size:13px; }
+  /* 카드: 영상 영역은 남는 공간에 맞춰 줄어들며 가장자리를 잘라 채우고(cover), 아래 이름·버튼 줄은 항상 그대로 */
+  .tile { background:#000; border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative;
+    display:flex; flex-direction:column; min-height:0; }
+  .tile video { width:100%; aspect-ratio:4/3; flex:1 1 auto; min-height:60px; height:auto; display:block; background:#000; object-fit:cover; }
+  .tile .bar { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--panel); font-size:13px; }
   .tile .bar span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .tile .bar button { padding:4px 8px; font-size:12px; }
+  .tile .bar button { flex:none; padding:4px 8px; font-size:12px; }
+  .tile .bar span { min-width:0; }
   .tile .msg { position:absolute; inset:0 0 34px 0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; pointer-events:none; }
   .empty { color:var(--muted); font-size:14px; padding:40px; text-align:center; grid-column:1/-1; }
   .tile.dragging { opacity:.4; }
   .tile video { cursor:zoom-in; }
   .tile.big { position:fixed; inset:4vh 4vw; z-index:1500; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.6); }
-  .tile.big video { flex:1; aspect-ratio:auto; height:0; min-height:0; cursor:zoom-out; }
+  .tile.big video { flex:1; aspect-ratio:auto; height:0; min-height:0; cursor:zoom-out; object-fit:contain; }
   .tile.big .bar { font-size:15px; }
   #backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:1400; }
   #backdrop.show { display:block; }
