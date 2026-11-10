@@ -34,8 +34,12 @@
   .item .name { flex:1; min-width:0; }
   .item.sel { background:#1a2236; margin-bottom:3px; cursor:grab; }
   .item .num { flex:none; width:20px; height:20px; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; margin-top:1px; }
-  .item .ord { flex:none; display:flex; gap:3px; }
-  .item .ord button { padding:3px 7px; font-size:11px; }
+  .item.sel { cursor:default; }
+  .item .handle { flex:none; align-self:center; font-size:20px; line-height:1; padding:6px 10px; margin:-6px -4px -6px 0; color:var(--muted);
+    cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; border-radius:6px; }
+  .item .handle:hover { color:var(--text); background:#263049; }
+  .item.dragging { background:#2a3a63; box-shadow:0 4px 14px rgba(0,0,0,.5); position:relative; z-index:2; }
+  .item.dragging .handle { cursor:grabbing; color:#fff; }
   .sect { font-size:11px; color:var(--muted); margin:10px 8px 6px; }
   .item small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
   main { flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -256,14 +260,14 @@ function renderList(){
   const sel = selected.map(byId).filter(c => c && match(c));
   const rest = all.filter(c => !selected.includes(c.cctvId) && match(c));
   const row = (c, isSel) => `
-    <div class="item${isSel?' sel':''}" ${isSel?`draggable="true" data-sel="${c.cctvId}"`:''}>
+    <div class="item${isSel?' sel':''}" ${isSel?`data-sel="${c.cctvId}"`:''}>
       ${isSel?`<span class="num">${selected.indexOf(c.cctvId)+1}</span>`:''}
       <input type="checkbox" data-id="${c.cctvId}" ${isSel?'checked':''}>
       <div class="name" data-toggle="${c.cctvId}">${c.instlPos}<small>${c.instlAddr||''}</small></div>
-      ${isSel?`<span class="ord"><button data-up="${c.cctvId}" title="앞으로">▲</button><button data-down="${c.cctvId}" title="뒤로">▼</button></span>`:''}
+      ${isSel?`<span class="handle" title="끌어서 순서 바꾸기">≡</span>`:''}
     </div>`;
   let html = '';
-  if (sel.length) html += `<p class="sect">선택한 CCTV · 모아보기 순서 (끌거나 ▲▼로 바꾸기)</p>` + sel.map(c=>row(c,true)).join('');
+  if (sel.length) html += `<p class="sect">선택한 CCTV · 모아보기 순서 (≡ 를 잡고 끌어서 바꾸기)</p>` + sel.map(c=>row(c,true)).join('');
   if (rest.length) html += `<p class="sect">전체 CCTV</p>` + rest.map(c=>row(c,false)).join('');
   $('#list').innerHTML = html || '<p class="hint" style="padding:10px">검색 결과가 없어요.</p>';
 }
@@ -274,24 +278,49 @@ function moveSel(id, to){ // to: 새 위치 index
   save(); renderGrid(); renderList();
 }
 $('#list').addEventListener('click', e => {
-  const t = e.target;
-  if (t.dataset.up) { moveSel(t.dataset.up, selected.indexOf(t.dataset.up)-1); return; }
-  if (t.dataset.down) { moveSel(t.dataset.down, selected.indexOf(t.dataset.down)+1); return; }
-  const name = t.closest('[data-toggle]');
+  const name = e.target.closest('[data-toggle]');
   if (name) toggle(name.dataset.toggle);
 });
-// 목록에서 끌어서 순서 바꾸기 (PC)
-let dragSel = null;
-$('#list').addEventListener('dragstart', e => { const it = e.target.closest('[data-sel]'); if (it) { dragSel = it.dataset.sel; it.style.opacity=.4; } });
-$('#list').addEventListener('dragend', e => { dragSel = null; renderList(); });
-$('#list').addEventListener('dragover', e => { if (dragSel && e.target.closest('[data-sel]')) e.preventDefault(); });
-$('#list').addEventListener('drop', e => {
-  const it = e.target.closest('[data-sel]'); if (!dragSel || !it) return; e.preventDefault();
-  const r = it.getBoundingClientRect(), after = (e.clientY - r.top) > r.height/2;
-  let to = selected.indexOf(it.dataset.sel) + (after ? 1 : 0);
-  if (selected.indexOf(dragSel) < to) to--;
-  moveSel(dragSel, to);
+// 목록에서 ≡ 를 잡고 끌어서 순서 바꾸기 (마우스·터치 공통)
+let drag = null;
+$('#list').addEventListener('pointerdown', e => {
+  const h = e.target.closest('.handle'); if (!h) return;
+  e.preventDefault();
+  const it = h.closest('[data-sel]');
+  drag = { it, id:it.dataset.sel, pid:e.pointerId, scroll:null, y:e.clientY };
+  h.setPointerCapture(e.pointerId);
+  it.classList.add('dragging');
 });
+function dragMove(y){
+  if (!drag) return;
+  drag.y = y;
+  const items = [...document.querySelectorAll('#list [data-sel]')].filter(x => x !== drag.it);
+  let placed = false;
+  for (const x of items) {
+    const r = x.getBoundingClientRect();
+    if (y < r.top + r.height/2) { if (drag.it.nextElementSibling !== x) x.before(drag.it); placed = true; break; }
+  }
+  if (!placed && items.length) { const last = items[items.length-1]; if (last.nextElementSibling !== drag.it) last.after(drag.it); }
+  // 목록 위·아래 끝에 가까우면 자동 스크롤
+  const lr = $('#list').getBoundingClientRect(), edge = 40;
+  const v = y < lr.top + edge ? -8 : y > lr.bottom - edge ? 8 : 0;
+  clearInterval(drag.scroll); drag.scroll = v ? setInterval(() => { $('#list').scrollTop += v; dragMove(drag.y); }, 30) : null;
+}
+$('#list').addEventListener('pointermove', e => { if (drag && e.pointerId === drag.pid) dragMove(e.clientY); });
+function dragEnd(e){
+  if (!drag || (e && e.pointerId !== drag.pid)) return;
+  clearInterval(drag.scroll); drag.it.classList.remove('dragging');
+  // 화면에 보이는 선택 항목의 새 순서를 원래 자리들에 다시 채워 넣기 (검색 중일 때도 안전)
+  const shown = [...document.querySelectorAll('#list [data-sel]')].map(x => x.dataset.sel);
+  const slots = selected.map((id,i) => shown.includes(id) ? i : -1).filter(i => i >= 0);
+  const next = selected.slice(); slots.forEach((slot,k) => next[slot] = shown[k]);
+  const changed = next.join() !== selected.join();
+  drag = null;
+  if (changed) { selected = next; save(); renderGrid(); }
+  renderList();
+}
+$('#list').addEventListener('pointerup', dragEnd);
+$('#list').addEventListener('pointercancel', dragEnd);
 
 $('#list').addEventListener('change', e => {
   const id = e.target.dataset.id; if(!id) return;
