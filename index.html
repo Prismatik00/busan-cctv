@@ -19,12 +19,9 @@
   #map.show { display:block; }
   #list.hide { display:none; }
   .leaflet-tooltip { font-size:12px; }
-  .pv-popup .leaflet-popup-content-wrapper { background:#171a21; color:#e7e9ee; border-radius:10px; padding:0; }
-  .pv-popup .leaflet-popup-content { margin:8px; width:260px !important; }
-  .pv-popup .leaflet-popup-tip { background:#171a21; }
-  .pv-popup a.leaflet-popup-close-button { color:#ccc; }
-  .pv { cursor:pointer; }
-  .pv-name { font-size:13px; font-weight:600; margin:0 18px 6px 2px; }
+  .pv { position:fixed; z-index:1300; width:260px; background:#171a21; color:#e7e9ee; border:1px solid #2c3240; border-radius:10px; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,.5); cursor:pointer; }
+  .pv-x { float:right; color:#aaa; padding:0 4px; cursor:pointer; }
+  .pv-name { font-size:13px; font-weight:600; margin:0 2px 6px 2px; }
   .pv-vid { position:relative; background:#000; border-radius:6px; overflow:hidden; }
   .pv-vid video { width:100%; aspect-ratio:16/9; object-fit:fill; display:block; }
   .pv-msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#8b91a0; font-size:12px; }
@@ -258,7 +255,7 @@ function initMap(){
   legend.addTo(map);
   all.forEach(c => {
     if (!c.lat || !c.lot) return;
-    const m = L.circleMarker([c.lat, c.lot], markerStyle(selected.includes(c.cctvId))).addTo(map);
+    const m = L.circleMarker([c.lat, c.lot], { ...markerStyle(selected.includes(c.cctvId)), bubblingMouseEvents:false }).addTo(map);
     // PC: 올리면 미리보기, 클릭하면 추가/빼기 · 휴대폰: 누르면 미리보기, 미리보기를 누르면 추가/빼기
     m.on('mouseover', e => { if (!isTouch(e)) openPreview(c, m); });
     m.on('mouseout', e => { if (!isTouch(e)) schedulePreviewClose(); });
@@ -269,49 +266,60 @@ function initMap(){
     markers.set(c.cctvId, m);
   });
   map.on('zoomstart movestart', () => { if (!preview.touchOpen) closePreview(); });
+  map.on('move zoom', placePreview);
+  map.on('click', closePreview); // 휴대폰: 지도 빈 곳을 누르면 미리보기 닫기
 }
 // ---------- 지도 위 CCTV 미리보기 (실시간 영상) ----------
+// 지도 밖으로 잘리지 않도록 페이지 위에 떠 있는 카드로 표시
 const hoverNone = window.matchMedia && matchMedia('(hover: none)').matches;
 function isTouch(e){ const o = e && e.originalEvent; return hoverNone || (o && (o.pointerType === 'touch' || (o.sourceCapabilities && o.sourceCapabilities.firesTouchEvents))); }
-const preview = { id:null, hls:null, popup:null, timer:null, touchOpen:false };
-function previewHtml(c){
-  const on = selected.includes(c.cctvId);
-  return `<div class="pv" data-pv="${c.cctvId}">
-    <div class="pv-name">${c.instlPos}</div>
-    <div class="pv-vid"><video muted playsinline autoplay></video><span class="pv-msg">연결 중…</span></div>
-    <button class="pv-btn ${on?'on':''}">${on ? '✓ 모아보기에 있음 · 눌러서 빼기' : '+ 모아보기에 추가'}</button>
-  </div>`;
+const preview = { id:null, hls:null, el:null, timer:null, touchOpen:false, m:null };
+function previewBtn(id){ const on = selected.includes(id); return [on, on ? '✓ 모아보기에 있음 · 눌러서 빼기' : '+ 모아보기에 추가']; }
+function placePreview(){
+  if (!preview.el || !preview.m) return;
+  const r = $('#map').getBoundingClientRect(), pt = map.latLngToContainerPoint(preview.m.getLatLng());
+  const x = r.left + pt.x, y = r.top + pt.y, W = preview.el.offsetWidth, H = preview.el.offsetHeight, pad = 8;
+  let left = x - W/2, top = y - H - 14;                     // 기본: 점 위쪽
+  if (top < pad) top = y + 14;                               // 위가 모자라면 아래쪽
+  left = Math.max(pad, Math.min(innerWidth - W - pad, left)); // 화면 밖으로 안 나가게
+  top = Math.max(pad, Math.min(innerHeight - H - pad, top));
+  preview.el.style.left = left + 'px'; preview.el.style.top = top + 'px';
 }
 function openPreview(c, m){
   clearTimeout(preview.timer);
-  if (preview.id === c.cctvId && preview.popup && map.hasLayer(preview.popup)) return;
+  if (preview.id === c.cctvId && preview.el) return;
   closePreview();
-  preview.id = c.cctvId; preview.touchOpen = hoverNone;
-  preview.popup = L.popup({ closeButton:hoverNone, autoPan:hoverNone, offset:[0,-4], className:'pv-popup', maxWidth:300, minWidth:240 })
-    .setLatLng(m.getLatLng()).setContent(previewHtml(c)).openOn(map);
-  const box = preview.popup.getElement();
-  const v = box.querySelector('video'), msg = box.querySelector('.pv-msg');
+  const [on, txt] = previewBtn(c.cctvId);
+  const el = document.createElement('div'); el.className = 'pv';
+  el.innerHTML = `<div class="pv-name">${c.instlPos}${hoverNone?'<span class="pv-x">✕</span>':''}</div>
+    <div class="pv-vid"><video muted playsinline autoplay></video><span class="pv-msg">연결 중…</span></div>
+    <button class="pv-btn ${on?'on':''}">${txt}</button>`;
+  document.body.appendChild(el);
+  Object.assign(preview, { id:c.cctvId, el, m, touchOpen:hoverNone });
+  placePreview();
+  const v = el.querySelector('video'), msg = el.querySelector('.pv-msg');
   v.addEventListener('playing', () => msg.style.display = 'none');
   if (window.Hls && Hls.isSupported()) {
     preview.hls = new Hls({ liveSyncDurationCount:2 }); preview.hls.loadSource(c.hlsAddr); preview.hls.attachMedia(v);
     preview.hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) msg.textContent = '영상 신호 없음'; });
   } else v.src = c.hlsAddr;
   v.play().catch(()=>{});
-  // 미리보기 위에 마우스가 있으면 닫지 않음, 미리보기를 누르면 추가/빼기
-  box.addEventListener('mouseenter', () => clearTimeout(preview.timer));
-  box.addEventListener('mouseleave', () => { if (!hoverNone) schedulePreviewClose(); });
-  box.querySelector('.pv').addEventListener('click', e => { e.stopPropagation(); toggle(c.cctvId); });
-  preview.popup.on('remove', () => { if (preview.popup && !map.hasLayer(preview.popup)) cleanupPreview(); });
+  el.addEventListener('mouseenter', () => clearTimeout(preview.timer));
+  el.addEventListener('mouseleave', () => { if (!hoverNone) schedulePreviewClose(); });
+  el.addEventListener('click', e => { e.stopPropagation(); if (e.target.classList.contains('pv-x')) { closePreview(); return; } toggle(c.cctvId); });
 }
 function updatePreview(){
-  if (!preview.popup || !preview.id) return;
-  const el = preview.popup.getElement(); if (!el) return;
-  const on = selected.includes(preview.id), b = el.querySelector('.pv-btn');
-  b.classList.toggle('on', on); b.textContent = on ? '✓ 모아보기에 있음 · 눌러서 빼기' : '+ 모아보기에 추가';
+  if (!preview.el) return;
+  const [on, txt] = previewBtn(preview.id), b = preview.el.querySelector('.pv-btn');
+  b.classList.toggle('on', on); b.textContent = txt;
 }
 function schedulePreviewClose(){ clearTimeout(preview.timer); preview.timer = setTimeout(closePreview, 250); }
-function cleanupPreview(){ if (preview.hls) { preview.hls.destroy(); preview.hls = null; } preview.id = null; preview.popup = null; }
-function closePreview(){ clearTimeout(preview.timer); const p = preview.popup; cleanupPreview(); if (p && map) map.closePopup(p); }
+function closePreview(){
+  clearTimeout(preview.timer);
+  if (preview.hls) { preview.hls.destroy(); preview.hls = null; }
+  if (preview.el) preview.el.remove();
+  Object.assign(preview, { id:null, el:null, m:null });
+}
 function refreshMarkers(){
   for (const [id,m] of markers) { const on = selected.includes(id); m.setStyle(markerStyle(on)); if (on) m.bringToFront(); }
 }
