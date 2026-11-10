@@ -333,7 +333,10 @@ function makeTile(c){
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount:2, manifestLoadingMaxRetry:4, levelLoadingMaxRetry:4, fragLoadingMaxRetry:4 });
       hls.loadSource(c.hlsAddr); hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) { msg.textContent='영상 연결 실패 · ↻ 눌러 재시도'; msg.style.display='flex'; } });
+      hls.on(Hls.Events.ERROR, (_,d) => { if (d.fatal) {
+        msg.textContent='영상 신호 없음 · 30초 후 자동 재연결'; msg.style.display='flex';
+        clearTimeout(p.retry); p.retry = setTimeout(() => { if (players.get(c.cctvId) === p) start(); }, 30000);
+      } });
       p.hls = hls;
     } else { video.src = c.hlsAddr; } // Safari 기본 HLS (이 경우 캡처가 막힐 수 있음)
     video.play().catch(()=>{});
