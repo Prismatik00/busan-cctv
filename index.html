@@ -161,6 +161,10 @@
   .tile .bar button { flex:none; padding:4px 8px; font-size:12px; }
   .tile .bar span { min-width:0; }
   .tile .bar span.nm { cursor:pointer; }
+  .tile .bar button.dir { flex:none; width:24px; height:24px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; }
+  .tile .bar button.dir .dot { width:5px; height:5px; border-radius:50%; background:var(--muted); }
+  .tile .bar button.dir .arr { display:inline-block; font-size:14px; font-weight:700; line-height:1; transition:transform .2s ease; }
+  .tile .bar button.dir.set { border-color:#3d7bfd; color:#9ec1ff; }
   .tile .bar span.nm:hover { text-decoration:underline; color:#9ec1ff; }
   .focus-ring { animation:focusPulse 1.2s ease-out 3; }
   @keyframes focusPulse { 0% { stroke-opacity:1; stroke-width:4; } 100% { stroke-opacity:0; stroke-width:14; } }
@@ -290,9 +294,27 @@ function load(){
   try { const v = localStorage.getItem(KEY); return v === null ? DEFAULT_SELECTED.slice() : (JSON.parse(v) || []); }
   catch(e){ return DEFAULT_SELECTED.slice(); }
 }
+// CCTV별 방향 표시: 없음(점) → ↑ ↗ → ↘ ↓ ↙ ← ↖ → 다시 점. 지금 화면 것만 기억, 설정 저장 시 묶음마다 따로 저장
+let dirs = {}; try { dirs = JSON.parse(localStorage.getItem(KEY+'-dirs')) || {}; } catch(e){}
+const DIR_ARROW = ['↑','↗','→','↘','↓','↙','←','↖'];
+function dirHtml(id){ const d = dirs[id]; return d === undefined
+  ? `<button class="dir" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="dot"></span></button>`
+  : `<button class="dir set" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="arr" style="transform:rotate(${d*45}deg)">↑</span></button>`; }
+function cycleDir(id, btn){
+  const d = dirs[id];
+  if (d === undefined) dirs[id] = 0; else if (d >= 7) delete dirs[id]; else dirs[id] = d + 1;
+  save();
+  const arr = btn.querySelector('.arr');
+  if (dirs[id] !== undefined && arr) { // 화살표는 부드럽게 시계방향으로 회전
+    arr.style.transform = `rotate(${dirs[id]*45}deg)`;
+  } else btn.outerHTML = dirHtml(id);
+}
+function paintDirs(){ players.forEach((p,id) => { const b = p.el.querySelector('.dir'); if (b) b.outerHTML = dirHtml(id); }); }
 function save(){
   try {
     localStorage.setItem(KEY, JSON.stringify(selected));
+    Object.keys(dirs).forEach(id => { if (!selected.includes(id)) delete dirs[id]; }); // 뺀 CCTV의 방향은 지움
+    localStorage.setItem(KEY+'-dirs', JSON.stringify(dirs));
     // 고속도로·국도 CCTV는 이름·위치를 같이 저장해 두었다가 다음에 바로 보여줌
     const meta = {}; selected.filter(isNat).forEach(id => { const c = nat.get(id); if (c) meta[id] = { instlPos:c.instlPos, instlAddr:c.instlAddr, lat:c.lat, lot:c.lot, src:c.src }; });
     localStorage.setItem(KEY+'-nat', JSON.stringify(meta));
@@ -823,7 +845,7 @@ function renderGrid(){
 function makeTile(c){
   const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
-    <div class="bar"><span class="nm" title="눌러서 지도에서 위치 보기${c.instlAddr ? ' · '+c.instlAddr : ''}">${c.instlPos}</span>
+    <div class="bar">${dirHtml(c.cctvId)}<span class="nm" title="눌러서 지도에서 위치 보기${c.instlAddr ? ' · '+c.instlAddr : ''}">${c.instlPos}</span>
     ${naverBtn(c)}<button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
@@ -855,6 +877,7 @@ function makeTile(c){
   video.addEventListener('click', () => el.classList.contains('big') ? closeBig() : openBig(el));
   el.querySelector('.bar').addEventListener('click', e => {
     if (e.target.classList.contains('nm')) { focusOnMap(c); return; } // 이름 누르면 지도에서 위치 보기
+    const db = e.target.closest('.dir'); if (db) { cycleDir(c.cctvId, db); return; }
     const act = e.target.dataset.act;
     if (act==='reload') start();
     if (act==='del') { closeBig(); selected = selected.filter(x=>x!==c.cctvId); save(); renderGrid(); renderList(); }
@@ -941,7 +964,7 @@ function drawFrame(ctx, p, x, y, w, h){
   const v=p.video;
   if (v.videoWidth) ctx.drawImage(v, x, y, w, h);
   else { ctx.fillStyle='#888'; ctx.font=`${14*SCALE/2+6}px sans-serif`; ctx.fillText('영상 없음', x+12, y+h/2); }
-  const label = `${p.c.instlPos}  ·  ${stampText()}`;
+  const dv = dirs[p.c.cctvId], label = `${dv !== undefined ? DIR_ARROW[dv]+' ' : ''}${p.c.instlPos}  ·  ${stampText()}`;
   ctx.font = `bold ${Math.round(w/32)}px sans-serif`;
   const pad = Math.round(w/80), th = Math.round(w/32)+pad*2;
   ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(x, y+h-th, w, th);
@@ -988,14 +1011,15 @@ function renderPresets(cur){
   $('#presetDel').disabled = !$('#preset').value;
 }
 function currentSettings(){
-  const s = { selected:selected.slice(), cols:$('#cols').value, wide:!!document.querySelector('aside').style.width };
+  const s = { selected:selected.slice(), cols:$('#cols').value, wide:!!document.querySelector('aside').style.width, dirs:{ ...dirs } };
   if (map) { const c = map.getCenter(); s.view = { c:[+c.lat.toFixed(5), +c.lng.toFixed(5)], z:map.getZoom() }; }
   return s;
 }
 function applySettings(s){
   closeBig();
   selected = (s.selected||[]).filter(id => !all.length || isNat(id) || byId(id));
-  save();
+  dirs = { ...(s.dirs || {}) }; // 같은 CCTV라도 묶음마다 방향이 다를 수 있음
+  save(); paintDirs();
   $('#cols').value = s.cols || DEFAULT_COLS; setCols();
   setWide(!!s.wide);
   if (map && s.view) map.setView(s.view.c, s.view.z);
@@ -1040,11 +1064,13 @@ try { renderPresets(localStorage.getItem(KEY+'-preset-cur') || ''); } catch(e){ 
 function encodeSettings(name, s, key){
   const ids = (s.selected||[]).map(id => isNat(id) ? id : String(+id.replace(/\D/g,''))).join('.');
   const v = s.view ? `${s.view.c[0]},${s.view.c[1]},${s.view.z}` : '';
-  return [name, s.cols||'', v, ids, s.wide?'1':'', key||''].map(encodeURIComponent).join('|');
+  const dd = (s.selected||[]).map(id => s.dirs && s.dirs[id] !== undefined ? s.dirs[id] : '-').join('');
+  return [name, s.cols||'', v, ids, s.wide?'1':'', key||'', /\d/.test(dd) ? dd : ''].map(encodeURIComponent).join('|');
 }
 function decodeSettings(str){
-  const [name, cols, v, ids, wide, key] = str.split('|').map(decodeURIComponent);
-  const s = { selected:(ids||'').split('.').filter(Boolean).map(n => isNat(n) ? n : 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1' };
+  const [name, cols, v, ids, wide, key, dd] = str.split('|').map(decodeURIComponent);
+  const s = { selected:(ids||'').split('.').filter(Boolean).map(n => isNat(n) ? n : 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1', dirs:{} };
+  (dd||'').split('').forEach((ch,i) => { if (/[0-7]/.test(ch) && s.selected[i]) s.dirs[s.selected[i]] = +ch; });
   if (v) { const [a,b,z] = v.split(',').map(Number); if (!isNaN(a)&&!isNaN(b)&&!isNaN(z)) s.view = { c:[a,b], z }; }
   return { name: name || '받은 설정', s, key: key || '' };
 }
