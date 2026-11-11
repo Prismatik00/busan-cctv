@@ -44,6 +44,17 @@
   #qrImg img, #qrImg svg { display:block; width:260px; height:260px; max-width:70vw; max-height:70vw; }
   #qrLink { width:100%; margin-top:10px; padding:7px 8px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--muted); font-size:11px; }
   #qrBox .btns { display:flex; gap:8px; justify-content:center; margin-top:12px; }
+  #pedit { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2550; }
+  #pedit.show { display:flex; }
+  #pedit .box { background:var(--panel); padding:16px; border-radius:12px; width:min(380px,92vw); max-height:80vh; display:flex; flex-direction:column; }
+  #peList { overflow:auto; margin:2px 0; }
+  .pe-row { display:flex; align-items:center; gap:6px; padding:7px 8px; margin:3px 0; border-radius:7px; background:#1d212b; font-size:13px; }
+  .pe-row .nm { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pe-row .h { cursor:grab; color:var(--muted); font-size:18px; padding:0 4px; touch-action:none; user-select:none; }
+  .pe-row button { padding:2px 8px; font-size:12px; }
+  .pe-row.del { opacity:.45; } .pe-row.del .nm { text-decoration:line-through; }
+  .pe-row.drag { background:#2a3a63; box-shadow:0 4px 14px rgba(0,0,0,.5); }
+  #pedit .btns { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
   #dlg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2600; }
   #dlg.show { display:flex; }
   #dlg .box { background:var(--panel); padding:18px; border-radius:12px; width:min(380px,90vw); }
@@ -236,7 +247,7 @@
   <div class="toolbar">
     <span class="preset">
       <select id="preset" title="저장한 목록 불러오기"><option value="" hidden>목록</option></select>
-      <button id="presetDel" title="선택한 목록 삭제">삭제</button>
+      <button id="presetDel" title="저장한 목록 순서 바꾸기·이름 바꾸기·삭제">편집</button>
     </span>
     <button id="presetSave">목록 저장</button>
     <button id="presetQR" title="지금 설정을 QR·링크로 다른 기기에 보내기">QR 만들기</button>
@@ -266,6 +277,12 @@
   <label id="qrKeyWrap" style="display:block;font-size:12px;margin-top:8px;color:#ffb35c"><input type="checkbox" id="qrKey" checked> 인증키도 같이 보내기 (내 기기에만 쓰세요)</label>
   <input id="qrLink" type="text" readonly>
   <div class="btns"><button class="primary" id="qrCopy">링크 복사</button><button id="qrClose">닫기</button></div>
+</div></div>
+<div id="pedit"><div class="box">
+  <p style="margin:0 0 4px;font-size:14px;font-weight:600">목록 편집</p>
+  <p class="hint" style="margin:0 0 8px">≡ 를 잡고 끌어서 순서를 바꾸고, ✎ 이름 바꾸기, ✕ 삭제. "완료"를 눌러야 반영돼요.</p>
+  <div id="peList"></div>
+  <div class="btns"><button class="primary" id="peOk">완료</button><button id="peCancel">취소</button></div>
 </div></div>
 <div id="dlg"><div class="box">
   <p id="dlgTitle"></p>
@@ -1005,13 +1022,18 @@ function loadPresets(){
   return { '기본': { selected:DEFAULT_SELECTED.slice(), cols:DEFAULT_COLS, view:DEFAULT_VIEW } }; // 처음엔 기본 구성 하나를 넣어 둠
 }
 let presets = loadPresets();
-function savePresets(){ try { localStorage.setItem(PKEY, JSON.stringify(presets)); localStorage.setItem(KEY+'-preset-cur', $('#preset').value); } catch(e){ toast('이 브라우저에서는 저장이 안 돼요.'); } }
+let presetOrder = []; try { presetOrder = JSON.parse(localStorage.getItem(KEY+'-presets-order')) || []; } catch(e){}
+function orderedPresetNames(){ // 사용자가 정한 순서 → 없으면 새로 생긴 것은 뒤에(가나다순)
+  const ks = Object.keys(presets), out = presetOrder.filter(n => ks.includes(n));
+  ks.filter(n => !out.includes(n)).sort((a,b)=>a.localeCompare(b,'ko')).forEach(n => out.push(n));
+  return out;
+}
+function savePresets(){ try { localStorage.setItem(PKEY, JSON.stringify(presets)); localStorage.setItem(KEY+'-presets-order', JSON.stringify(orderedPresetNames())); localStorage.setItem(KEY+'-preset-cur', $('#preset').value); } catch(e){ toast('이 브라우저에서는 저장이 안 돼요.'); } }
 function renderPresets(cur){
-  const names = Object.keys(presets).sort((a,b)=>a.localeCompare(b,'ko'));
+  const names = orderedPresetNames();
   $('#preset').innerHTML = '<option value="" hidden>목록</option><option value="__new__">+ 새 목록</option>' +
     names.map(n => `<option value="${n.replace(/"/g,'&quot;')}">${n.replace(/</g,'&lt;')}</option>`).join('');
   $('#preset').value = cur && presets[cur] ? cur : '';
-  $('#presetDel').disabled = !$('#preset').value;
 }
 function currentSettings(){
   const s = { selected:selected.slice(), cols:$('#cols').value, wide:!!document.querySelector('aside').style.width, dirs:{ ...dirs } };
@@ -1066,15 +1088,63 @@ $('#preset').addEventListener('change', async () => {
     curPreset = ''; renderPresets(''); try { localStorage.setItem(KEY+'-preset-cur', ''); } catch(e){}
     toast('새 목록 · 지도나 목록에서 CCTV를 추가하세요'); return;
   }
-  curPreset = n; $('#presetDel').disabled = !n;
+  curPreset = n;
   try { localStorage.setItem(KEY+'-preset-cur', n); } catch(e){}
   if (n && presets[n]) { applySettings(presets[n]); toast(`"${n}" 불러옴`); }
 });
-$('#presetDel').addEventListener('click', async () => {
-  const n = $('#preset').value; if (!n || n === '__new__') return;
-  const ok = await dialog({ title:`"${n}" 목록을 삭제할까요? 되돌릴 수 없어요.`, okText:'삭제' });
-  if (!ok) return;
-  delete presets[n]; curPreset = ''; renderPresets(''); savePresets(); toast(`"${n}" 삭제됨`);
+// ---------- 목록 편집: 순서 바꾸기·이름 바꾸기·삭제 (완료를 눌러야 반영) ----------
+let pe = null;
+function peRender(){
+  $('#peList').innerHTML = pe.rows.length ? pe.rows.map((r,i) => `<div class="pe-row${r.del?' del':''}" data-i="${i}">
+      <span class="h" title="끌어서 순서 바꾸기">≡</span><span class="nm">${r.name.replace(/</g,'&lt;')}${r.name!==r.orig?` <small style="color:var(--muted)">(원래 ${r.orig.replace(/</g,'&lt;')})</small>`:''}</span>
+      <button data-a="ren" title="이름 바꾸기">✎</button><button data-a="del" title="${r.del?'삭제 취소':'삭제'}">${r.del?'되살리기':'✕'}</button></div>`).join('')
+    : '<p class="hint">저장한 목록이 없어요.</p>';
+}
+$('#presetDel').addEventListener('click', () => {
+  pe = { rows: orderedPresetNames().map(n => ({ orig:n, name:n, del:false })) };
+  peRender(); $('#pedit').classList.add('show');
+});
+$('#peCancel').addEventListener('click', () => { $('#pedit').classList.remove('show'); pe = null; });
+$('#pedit').addEventListener('click', e => { if (e.target.id === 'pedit') $('#peCancel').click(); });
+$('#peList').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return; const r = pe.rows[+b.closest('.pe-row').dataset.i];
+  if (b.dataset.a === 'del') { r.del = !r.del; peRender(); }
+  if (b.dataset.a === 'ren') {
+    $('#pedit').classList.remove('show');
+    const nn = await dialog({ title:'새 이름을 정해 주세요.', value:r.name, okText:'바꾸기',
+      check: v => pe.rows.some(x => x !== r && x.name === v) ? '같은 이름의 목록이 있어요.' : '' });
+    $('#pedit').classList.add('show');
+    if (nn && !pe.rows.some(x => x !== r && x.name === nn)) { r.name = nn; peRender(); }
+  }
+});
+// ≡ 로 끌어서 순서 바꾸기
+let peDrag = null;
+$('#peList').addEventListener('pointerdown', e => {
+  const hd = e.target.closest('.h'); if (!hd) return; e.preventDefault();
+  const row = hd.closest('.pe-row'); peDrag = { row, pid:e.pointerId }; hd.setPointerCapture(e.pointerId); row.classList.add('drag');
+});
+$('#peList').addEventListener('pointermove', e => {
+  if (!peDrag || e.pointerId !== peDrag.pid) return;
+  const rows = [...document.querySelectorAll('#peList .pe-row')].filter(x => x !== peDrag.row);
+  const t = rows.find(x => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height/2; });
+  if (t) { if (peDrag.row.nextElementSibling !== t) t.before(peDrag.row); } else if (rows.length) rows[rows.length-1].after(peDrag.row);
+});
+const peEnd = e => {
+  if (!peDrag || (e && e.pointerId !== peDrag.pid)) return;
+  const order = [...document.querySelectorAll('#peList .pe-row')].map(x => pe.rows[+x.dataset.i]);
+  pe.rows = order; peDrag = null; peRender();
+};
+$('#peList').addEventListener('pointerup', peEnd); $('#peList').addEventListener('pointercancel', peEnd);
+$('#peOk').addEventListener('click', () => {
+  const next = {}, order = [];
+  pe.rows.forEach(r => { if (r.del) return; next[r.name] = presets[r.orig]; order.push(r.name); });
+  const removed = pe.rows.filter(r => r.del).length;
+  const renamedCur = pe.rows.find(r => r.orig === curPreset);
+  presets = next; presetOrder = order;
+  curPreset = renamedCur && !renamedCur.del ? renamedCur.name : '';
+  renderPresets(curPreset); savePresets();
+  $('#pedit').classList.remove('show'); pe = null;
+  toast(removed ? `목록 ${removed}개 삭제 · 순서 저장됨` : '목록 순서 저장됨');
 });
 try { renderPresets(localStorage.getItem(KEY+'-preset-cur') || ''); } catch(e){ renderPresets(''); }
 
