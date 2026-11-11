@@ -148,7 +148,9 @@
   select, button { background:#0f1115; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 11px; font-size:13px; cursor:pointer; }
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button:hover { filter:brightness(1.15); }
-  #status { font-size:12px; color:var(--muted); margin-left:auto; }
+  .stat { margin-left:auto; display:inline-flex; align-items:center; gap:6px; }
+  #status { font-size:12px; color:var(--muted); }
+  #reverse { padding:2px 7px; font-size:13px; line-height:1.2; }
   /* 카드는 원래 비율(4:3) 크기를 유지하고, 넘치면 모아보기 영역이 스크롤됨 */
   #grid { flex:1; min-height:0; overflow-y:auto; padding:12px; display:grid; gap:10px; align-content:start; grid-auto-rows:max-content; }
   /* 카드: 영상 영역은 남는 공간에 맞춰 줄어들며 가장자리를 잘라 채우고(cover), 아래 이름·버튼 줄은 항상 그대로 */
@@ -232,17 +234,16 @@
 <main>
   <div class="toolbar">
     <span class="preset">
-      <select id="preset" title="저장한 설정 불러오기"><option value="">저장한 설정 선택…</option></select>
-      <button id="presetDel" title="선택한 설정 삭제">삭제</button>
+      <select id="preset" title="저장한 목록 불러오기"><option value="" hidden>목록</option></select>
+      <button id="presetDel" title="선택한 목록 삭제">삭제</button>
     </span>
-    <button id="presetSave">설정 저장</button>
+    <button id="presetSave">목록 저장</button>
     <button id="presetQR" title="지금 설정을 QR·링크로 다른 기기에 보내기">QR 만들기</button>
     <button id="itsKey" title="고속도로·국도 CCTV용 국가교통정보센터 인증키">인증키 입력</button>
     <label>열 <select id="cols"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
     <button class="primary" id="capAll">전체 캡처</button>
-    <button id="clear">모두 비우기</button>
     <button id="export">설정 복사</button>
-    <span id="status"></span>
+    <span class="stat"><button id="reverse" title="모아보기 순서를 거꾸로">⇅</button><span id="status"></span></span>
   </div>
   <div id="grid"></div>
 </main>
@@ -269,7 +270,7 @@
   <p id="dlgTitle"></p>
   <input id="dlgInput" type="text" maxlength="30">
   <p id="dlgNote"></p>
-  <div class="btns"><button class="primary" id="dlgOk">확인</button><button id="dlgCancel">취소</button></div>
+  <div class="btns"><button class="primary" id="dlgOk">확인</button><button id="dlgAlt" style="display:none"></button><button id="dlgCancel">취소</button></div>
 </div></div>
 <div id="exportBox"><div>
   <p style="margin:0 0 8px;font-size:14px">지금 화면 설정이에요. 복사해서 Claude에게 붙여 넣으면 같은 화면으로 아침 캡처를 예약할 수 있어요.</p>
@@ -988,12 +989,10 @@ function captureAll(){
   } catch(e){ toast('이 브라우저에서는 캡처가 막혀 있어요. 크롬이나 엣지로 열어 주세요.'); }
 }
 $('#capAll').addEventListener('click', captureAll);
-// 모두 비우기: 화면의 CCTV를 전부 빼기 (저장한 설정은 그대로)
-$('#clear').addEventListener('click', async () => {
-  if (!selected.length) { toast('비울 CCTV가 없어요.'); return; }
-  const ok = await dialog({ title:`화면의 CCTV ${selected.length}개를 모두 뺄까요? 저장한 설정은 그대로 남아요.`, okText:'모두 비우기' });
-  if (!ok) return;
-  closeBig(); selected = []; save(); renderGrid(); renderList(); toast('모두 비웠어요');
+// 순서 거꾸로
+$('#reverse').addEventListener('click', () => {
+  if (selected.length < 2) return;
+  closeBig(); selected.reverse(); save(); renderGrid(); renderList(); toast('순서를 거꾸로 바꿨어요');
 });
 
 // ---------- 이름 붙여 설정 저장 / 불러오기 / 삭제 ----------
@@ -1006,7 +1005,7 @@ let presets = loadPresets();
 function savePresets(){ try { localStorage.setItem(PKEY, JSON.stringify(presets)); localStorage.setItem(KEY+'-preset-cur', $('#preset').value); } catch(e){ toast('이 브라우저에서는 저장이 안 돼요.'); } }
 function renderPresets(cur){
   const names = Object.keys(presets).sort((a,b)=>a.localeCompare(b,'ko'));
-  $('#preset').innerHTML = '<option value="">저장한 설정 선택…</option>' +
+  $('#preset').innerHTML = '<option value="" hidden>목록</option><option value="__new__">+ 새 목록</option>' +
     names.map(n => `<option value="${n.replace(/"/g,'&quot;')}">${n.replace(/</g,'&lt;')}</option>`).join('');
   $('#preset').value = cur && presets[cur] ? cur : '';
   $('#presetDel').disabled = !$('#preset').value;
@@ -1027,36 +1026,52 @@ function applySettings(s){
   renderGrid(); renderList();
 }
 // 간단한 입력/확인 창 (브라우저 기본 팝업 대신)
-function dialog({ title, value=null, okText='확인', check=null, maxLength=30 }){
+function dialog({ title, value=null, okText='확인', check=null, maxLength=30, altText=null }){
   return new Promise(res => {
     $('#dlgTitle').textContent = title; $('#dlgOk').textContent = okText; $('#dlgNote').textContent = '';
+    const alt = $('#dlgAlt'); alt.style.display = altText ? '' : 'none'; alt.textContent = altText || ''; alt.onclick = () => done('alt');
     const inp = $('#dlgInput'); inp.maxLength = maxLength; inp.style.display = value === null ? 'none' : ''; inp.value = value || '';
     $('#dlg').classList.add('show'); if (value !== null) setTimeout(() => { inp.focus(); inp.select(); }, 30);
     const upd = () => { if (check) $('#dlgNote').textContent = check(inp.value.trim()) || ''; };
     inp.oninput = upd; upd();
-    const done = v => { $('#dlg').classList.remove('show'); inp.oninput = null; $('#dlgOk').onclick = $('#dlgCancel').onclick = inp.onkeydown = null; res(v); };
+    const done = v => { $('#dlg').classList.remove('show'); inp.oninput = null; $('#dlgOk').onclick = $('#dlgCancel').onclick = alt.onclick = inp.onkeydown = null; res(v); };
     $('#dlgOk').onclick = () => { const v = inp.value.trim(); if (value !== null && !v) { inp.focus(); return; } done(value === null ? true : v); };
     $('#dlgCancel').onclick = () => done(null);
     inp.onkeydown = e => { if (e.key === 'Enter') $('#dlgOk').click(); if (e.key === 'Escape') done(null); };
   });
 }
-$('#presetSave').addEventListener('click', async () => {
-  const name = await dialog({ title:'지금 화면을 어떤 이름으로 저장할까요?', value:$('#preset').value || '', okText:'저장',
-    check: v => presets[v] ? `"${v}" 설정을 지금 화면으로 덮어써요.` : '' });
-  if (!name) return;
-  presets[name] = currentSettings(); renderPresets(name); savePresets();
-  toast(`"${name}" 저장됨`);
-});
-$('#preset').addEventListener('change', () => {
-  const n = $('#preset').value; $('#presetDel').disabled = !n;
+async function savePresetFlow(){
+  const cur = curPreset && presets[curPreset] ? curPreset : '';
+  const name = await dialog({ title:'지금 목록을 어떤 이름으로 저장할까요?', value:cur, okText:'저장',
+    check: v => presets[v] ? `"${v}" 목록을 지금 화면으로 덮어써요.` : '' });
+  if (!name) return false;
+  presets[name] = currentSettings(); curPreset = name; renderPresets(name); savePresets();
+  toast(`"${name}" 저장됨`); return true;
+}
+let curPreset = ''; try { curPreset = localStorage.getItem(KEY+'-preset-cur') || ''; } catch(e){}
+$('#presetSave').addEventListener('click', savePresetFlow);
+$('#preset').addEventListener('change', async () => {
+  const n = $('#preset').value;
+  if (n === '__new__') { // 새 목록: 지금 목록 저장할지 물어보고 화면 비우기
+    renderPresets(curPreset);
+    if (selected.length) {
+      const r = await dialog({ title:`새 목록을 시작할까요? 지금 화면의 CCTV ${selected.length}개를 먼저 목록으로 저장할 수 있어요.`, okText:'저장하고 새 목록', altText:'저장 안 하고 새 목록' });
+      if (!r) return;
+      if (r === true && !(await savePresetFlow())) return;
+    }
+    closeBig(); selected = []; dirs = {}; save(); renderGrid(); renderList();
+    curPreset = ''; renderPresets(''); try { localStorage.setItem(KEY+'-preset-cur', ''); } catch(e){}
+    toast('새 목록 · 지도나 목록에서 CCTV를 추가하세요'); return;
+  }
+  curPreset = n; $('#presetDel').disabled = !n;
   try { localStorage.setItem(KEY+'-preset-cur', n); } catch(e){}
   if (n && presets[n]) { applySettings(presets[n]); toast(`"${n}" 불러옴`); }
 });
 $('#presetDel').addEventListener('click', async () => {
-  const n = $('#preset').value; if (!n) return;
-  const ok = await dialog({ title:`"${n}" 설정을 삭제할까요? 되돌릴 수 없어요.`, okText:'삭제' });
+  const n = $('#preset').value; if (!n || n === '__new__') return;
+  const ok = await dialog({ title:`"${n}" 목록을 삭제할까요? 되돌릴 수 없어요.`, okText:'삭제' });
   if (!ok) return;
-  delete presets[n]; renderPresets(''); savePresets(); toast(`"${n}" 삭제됨`);
+  delete presets[n]; curPreset = ''; renderPresets(''); savePresets(); toast(`"${n}" 삭제됨`);
 });
 try { renderPresets(localStorage.getItem(KEY+'-preset-cur') || ''); } catch(e){ renderPresets(''); }
 
