@@ -96,6 +96,8 @@
   #routeBox { padding:10px 12px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:#151821; flex:none; max-height:55vh; overflow:auto; }
   #routeBox.hide { display:none; }
   .rb-head { display:flex; align-items:center; margin-bottom:4px; } .rb-head b { font-size:13px; } .rb-head button { margin-left:auto; padding:3px 8px; }
+  .rb-naver { display:flex; gap:6px; margin:0 0 8px; }
+  .rb-naver input { flex:1; min-width:0; padding:6px 8px; border-radius:7px; border:1px solid #03c75a; background:#0f1115; color:var(--text); font-size:12px; }
   .rb-pt { position:relative; display:flex; align-items:center; gap:6px; margin:4px 0; }
   .rb-pt .tag { flex:none; width:22px; height:22px; border-radius:50%; color:#fff; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; }
   .rb-pt input { flex:1; min-width:0; padding:6px 8px; border-radius:7px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:13px; }
@@ -204,6 +206,10 @@
   <div id="routeBox" class="hide">
     <div class="rb-head"><b>경로로 CCTV 고르기</b><button id="rbClose" title="닫기">✕</button></div>
     <p class="hint" style="margin:0 0 6px">장소를 검색하거나 지도를 눌러 출발 → 도착을 찍으세요. 점은 끌어서 옮길 수 있어요.</p>
+    <div class="rb-naver">
+      <input id="rbNaver" type="text" placeholder="네이버 지도 길찾기 주소 붙여넣기 (map.naver.com/…/directions/…)">
+      <button id="rbNaverGo" class="small">적용</button>
+    </div>
     <div id="rbPts"></div>
     <button id="rbAddVia" class="small">+ 경유지</button>
     <div class="rb-opts">
@@ -1312,6 +1318,66 @@ function focusOnMap(c){
   setTimeout(() => map.removeLayer(ring), 3800);
   const m = markers.get(c.cctvId); if (m) m.bringToFront();
 }
+
+// ---------- 네이버 지도 길찾기 주소 → 출발·경유·도착 ----------
+// 지원: map.naver.com/p/directions/{출발}/{도착}/{경유}/car (좌표는 경위도 또는 웹메르카토르 미터)
+//       m.map.naver.com/route.nhn?sx=&sy=&ex=&ey=…,  nmap://route/car?slat=&slng=&dlat=&dlng=&v1lat=…
+function mercToLL(x, y){ return { lng: x/20037508.34*180, lat: Math.atan(Math.exp(y/20037508.34*Math.PI))*360/Math.PI - 90 }; }
+function toLL(x, y){
+  x = +x; y = +y; if (!isFinite(x) || !isFinite(y)) return null;
+  if (x > 120 && x < 135 && y > 30 && y < 45) return { lng:x, lat:y };               // 경도,위도
+  if (y > 120 && y < 135 && x > 30 && x < 45) return { lng:y, lat:x };               // 위도,경도
+  if (x > 1.3e7 && x < 1.5e7 && y > 3.4e6 && y < 5.7e6) return mercToLL(x, y);       // 웹메르카토르(m)
+  return null;
+}
+function parseNaverPoint(seg){
+  const parts = decodeURIComponent(seg).split(',');
+  const ll = toLL(parts[0], parts[1]); if (!ll) return null;
+  const name = (parts[2] || '').trim();
+  return { lat:ll.lat, lng:ll.lng, name: name || `네이버 경로 지점 (${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)})` };
+}
+function parseNaverRoute(text){
+  text = String(text||'').trim(); if (!text) return null;
+  let url; try { url = new URL(text.replace(/^nmap:\/\//, 'https://nmap.local/')); } catch(e){ return null; }
+  const q = url.searchParams, pts = [];
+  // 1) map.naver.com/.../directions/출발/도착/경유/방식
+  const m = url.pathname.match(/\/directions\/(.+)$/);
+  if (m) {
+    const segs = m[1].split('/').filter(Boolean);
+    const start = segs[0] && parseNaverPoint(segs[0]);
+    const goal = segs[1] && parseNaverPoint(segs[1]);
+    const vias = segs[2] && segs[2] !== '-' ? segs[2].split(/[:~]/).map(parseNaverPoint).filter(Boolean) : [];
+    if (start && goal) return [start, ...vias, goal];
+  }
+  // 2) 앱 주소 nmap://route/car?slat=…&slng=…&dlat=…&dlng=…&v1lat=…
+  if (q.get('slat') && q.get('dlat')) {
+    const P = (a,b,n) => { const ll = toLL(q.get(b), q.get(a)); return ll ? { ...ll, name:q.get(n) || '네이버 경로 지점' } : null; };
+    pts.push(P('slat','slng','sname'));
+    for (let i = 1; i <= 5; i++) if (q.get(`v${i}lat`)) pts.push(P(`v${i}lat`,`v${i}lng`,`v${i}name`));
+    pts.push(P('dlat','dlng','dname'));
+    if (pts.every(Boolean)) return pts;
+  }
+  // 3) 모바일 웹 m.map.naver.com/route.nhn?sx=…&sy=…&ex=…&ey=…
+  if (q.get('sx') && q.get('ex')) {
+    const P = (x,y,n) => { const ll = toLL(q.get(x), q.get(y)); return ll ? { ...ll, name:q.get(n) || '네이버 경로 지점' } : null; };
+    const out = [P('sx','sy','sname')];
+    for (let i = 1; i <= 5; i++) if (q.get(`v${i}x`) || q.get(`wx${i}`)) out.push(P(q.get(`v${i}x`)?`v${i}x`:`wx${i}`, q.get(`v${i}y`)?`v${i}y`:`wy${i}`, `v${i}name`));
+    out.push(P('ex','ey','ename'));
+    if (out.every(Boolean)) return out;
+  }
+  return null;
+}
+function applyNaverRoute(){
+  const raw = $('#rbNaver').value.trim(); if (!raw) return;
+  if (/naver\.me\//.test(raw)) { $('#rbInfo').textContent = 'naver.me 짧은 주소는 바로 읽을 수 없어요. 그 주소를 한 번 열고, 주소창의 긴 주소(map.naver.com/…)를 복사해 넣어 주세요.'; return; }
+  const pts = parseNaverRoute(raw);
+  if (!pts) { $('#rbInfo').textContent = '이 주소에서 출발지·도착지를 찾지 못했어요. 네이버 지도 "길찾기" 화면의 주소인지 확인해 주세요.'; return; }
+  route.pts = pts; routeRenderPts(); routeCompute();
+  toast(`네이버 경로를 불러왔어요 · ${pts.length}개 지점`);
+}
+$('#rbNaverGo').addEventListener('click', applyNaverRoute);
+$('#rbNaver').addEventListener('keydown', e => { if (e.key === 'Enter') applyNaverRoute(); });
+$('#rbNaver').addEventListener('paste', () => setTimeout(applyNaverRoute, 30)); // 붙여넣으면 바로 적용
 
 init();
 </script>
