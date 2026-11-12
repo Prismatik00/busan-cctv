@@ -124,6 +124,19 @@
   .rb-opts select { padding:3px 6px; font-size:12px; }
   #rbInfo { font-size:12px; margin:6px 0; min-height:16px; }
   .rb-btns { display:flex; gap:6px; }
+  .inc-ico { width:22px; height:22px; border-radius:50%; color:#fff; font:700 12px/22px sans-serif; text-align:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.5); cursor:pointer; }
+  .inc-toggle { background:#fff; color:#333; border:2px solid rgba(0,0,0,.2); border-radius:6px; padding:5px 8px; font-size:12px; font-weight:600; cursor:pointer; }
+  .inc-toggle.on { background:#4a1d1d; color:#fff; border-color:#e03131; }
+  .inc-toggle .rf { margin-left:6px; opacity:.8; }
+  .inc-card { position:fixed; z-index:1350; width:280px; background:#171a21; color:#e7e9ee; border:1px solid #2c3240; border-radius:10px; padding:10px; box-shadow:0 8px 24px rgba(0,0,0,.5); font-size:12px; }
+  .inc-card .t { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .inc-card .badge { color:#fff; border-radius:6px; padding:1px 7px; font-weight:700; font-size:11px; }
+  .inc-card .pl { font-weight:600; font-size:13px; flex:1; min-width:0; }
+  .inc-card .x { background:none; border:none; color:#aaa; padding:0 4px; cursor:pointer; }
+  .inc-card .msg { line-height:1.5; margin:4px 0 6px; color:#d0d4dc; }
+  .inc-card .meta { color:var(--muted); font-size:11px; }
+  .inc-card .bt { display:flex; gap:6px; margin-top:8px; }
+  .inc-card .bt button { flex:1; padding:6px; font-size:12px; }
   .route-num { background:#ffd43b; color:#222; border:none; box-shadow:none; font:700 10px/1 sans-serif; padding:2px 4px; border-radius:8px; }
   .route-num::before { display:none; }
   .route-pin { width:24px; height:24px; border-radius:50%; color:#fff; font:700 11px/24px sans-serif; text-align:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.5); }
@@ -508,11 +521,12 @@ function initMap(){
   routeBtn.onAdd = () => { const b = L.DomUtil.create('button','route-toggle'); b.textContent = '🛣 경로로 고르기';
     L.DomEvent.disableClickPropagation(b); b.onclick = () => route.open ? routeClose() : routeOpen(); return b; };
   routeBtn.addTo(map);
+  incInit(); // 돌발상황
   const paintNatBtn = () => { const b = document.querySelector('.nat-toggle'); if (!b) return;
     b.classList.toggle('on', natOn); b.innerHTML = `<span style="color:#f08c00">●</span><span style="color:#2f9e44">●</span> 고속도로·국도 ${natOn ? '켬' : '끔'}`; };
   setNatOn = on => { natOn = on; try { localStorage.setItem(KEY+'-natOn', on ? '1' : ''); } catch(e){}
     if (on) natLayer.addTo(map); else { natLayer.remove(); closePreview(); }
-    paintNatBtn(); loadNatView(); };
+    paintNatBtn(); loadNatView(); if (on) incLoadNat(); else incDrawNat([]); };
   paintNatBtn();
   // 고속도로·국도 CCTV는 지금 보고 있는 지역만 불러옴 (전국은 1만 개가 넘어서)
   const loaded = new Set(), G = 0.5;
@@ -543,7 +557,8 @@ function initMap(){
   loadNatView();
   map.on('zoomstart movestart', () => { if (!preview.touchOpen) closePreview(); });
   map.on('move zoom', placePreview);
-  map.on('click', e => { closePreview(); if (route.open) routeMapClick(e.latlng); }); // 휴대폰: 지도 빈 곳을 누르면 미리보기 닫기 · 경로 모드면 점 찍기
+  map.on('click', e => { closePreview(); incCloseCard(); if (route.open) routeMapClick(e.latlng); });
+  map.on('movestart', () => incCloseCard()); // 휴대폰: 지도 빈 곳을 누르면 미리보기 닫기 · 경로 모드면 점 찍기
 }
 // ---------- 지도 위 CCTV 미리보기 (실시간 영상) ----------
 // 지도 밖으로 잘리지 않도록 페이지 위에 떠 있는 카드로 표시
@@ -1384,7 +1399,9 @@ async function routeRun(keepRoute){
   let hits = matchRoute(geo.coords, pool, range);
   if (gap) { const out = []; for (const h of hits) if (!out.length || h.along - out[out.length-1].along >= gap) out.push(h); hits = out; }
   route.hits = hits; routeShowHits();
-  $('#rbInfo').innerHTML = `거리 <b>${geo.km.toFixed(1)}km</b> · 약 ${Math.round(geo.min)}분 (교통상황 미반영) · CCTV <b>${hits.length}개</b>`;
+  const incOnRoute = incAll().filter(x => matchRoute(geo.coords, [{ cctvId:x.id, lat:x.lat, lot:x.lng }], 300).length);
+  $('#rbInfo').innerHTML = `거리 <b>${geo.km.toFixed(1)}km</b> · 약 ${Math.round(geo.min)}분 (교통상황 미반영) · CCTV <b>${hits.length}개</b>`
+    + (incOnRoute.length ? `<br><span style="color:#ff8a8a">⚠ 경로 위 돌발상황 ${incOnRoute.length}건: ${incOnRoute.slice(0,3).map(x => x.type + ' ' + x.place).join(', ')}${incOnRoute.length>3?' 외':''}</span>` : '');
   $('#rbApply').disabled = !hits.length;
 }
 function matchRoute(coords, pool, range){
@@ -1500,6 +1517,87 @@ function applyNaverRoute(){
 $('#rbNaverGo').addEventListener('click', applyNaverRoute);
 $('#rbNaver').addEventListener('keydown', e => { if (e.key === 'Enter') applyNaverRoute(); });
 $('#rbNaver').addEventListener('paste', () => setTimeout(applyNaverRoute, 30)); // 붙여넣으면 바로 적용
+
+// ---------- 돌발상황: 부산시(키·호출 제한 없음, 3분마다 갱신) + 고속도로·국도(인증키, 켤 때·새로고침 때만) ----------
+const inc = { on:true, busan:[], nat:[], layer:null, timer:null, card:null, loadedAt:null };
+try { inc.on = localStorage.getItem(KEY+'-incOn') !== '0'; } catch(e){}
+const unesc = s => { let t = String(s||''); for (let i = 0; i < 3 && /&[a-z#0-9]+;/i.test(t); i++) { const ta = document.createElement('textarea'); ta.innerHTML = t; t = ta.value; } return t.trim(); };
+function incColor(type){ return /사고|고장|낙하|화재|추돌/.test(type) ? '#e03131' : /공사|작업|통제|차단/.test(type) ? '#f08c00' : /기상|강설|결빙|안개|침수/.test(type) ? '#1c7ed6' : '#868e96'; }
+const incAll = () => inc.busan.concat(inc.nat);
+function incInit(){
+  inc.layer = L.layerGroup(); if (inc.on) inc.layer.addTo(map);
+  const ctl = L.control({ position:'topleft' });
+  ctl.onAdd = () => { const b = L.DomUtil.create('button','inc-toggle'); L.DomEvent.disableClickPropagation(b);
+    b.onclick = e => { if (e.target.classList.contains('rf')) { incLoadBusan(); if (natOn) incLoadNat(true); toast('돌발상황 새로고침'); return; } incSetOn(!inc.on); }; return b; };
+  ctl.addTo(map); incPaintBtn();
+  if (inc.on) incLoadBusan();
+  if (inc.on && natOn) incLoadNat();
+  inc.timer = setInterval(() => { if (inc.on) incLoadBusan(); }, 3*60e3);
+}
+function incPaintBtn(){ const b = document.querySelector('.inc-toggle'); if (!b) return; const n = incAll().length;
+  b.classList.toggle('on', inc.on); b.innerHTML = `⚠ 돌발상황 ${inc.on ? (n ? n+'건' : '켬') : '끔'}${inc.on ? '<span class="rf" title="새로고침">↻</span>' : ''}`;
+  b.title = inc.on ? `부산시는 3분마다 자동 갱신${inc.loadedAt ? ' · 마지막 ' + inc.loadedAt : ''}${natOn ? ' · 고속도로·국도는 ↻ 누를 때 갱신' : ''}` : '돌발상황 표시'; }
+function incSetOn(on){ inc.on = on; try { localStorage.setItem(KEY+'-incOn', on ? '1' : '0'); } catch(e){}
+  if (on) { inc.layer.addTo(map); incLoadBusan(); if (natOn) incLoadNat(); } else { inc.layer.remove(); incCloseCard(); }
+  incPaintBtn(); }
+async function incLoadBusan(){
+  try {
+    const j = await fetch('https://its.busan.go.kr/api-n/v1/bsits/user/incs/map').then(r => r.json());
+    const a = Array.isArray(j) ? j : (j.data || Object.values(j).find(Array.isArray) || []);
+    inc.busan = a.filter(x => x.lat && x.lot).map(x => ({ id:'b'+x.incId, src:'busan', lat:+x.lat, lng:+x.lot, type:x.incTypeNm || '돌발', place:x.incSpotNm || '',
+      msg:unesc(x.rcptCn || x.incCn), time:x.ocrnDt || '', status:x.prgrsSttsNm || '', block:'', cctv:x.nearestCctvId, cctvName:x.nearestCctvInstlPos, cctvDist:x.nearestCctvDistanceMeter }));
+    inc.loadedAt = new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit' });
+  } catch(e){}
+  incDraw();
+}
+async function incLoadNat(force){
+  if (!ITS_KEY) return;
+  if (!force && inc.nat.length) { incDraw(); return; }
+  try {
+    const b = map.getBounds().pad(0.5);
+    const u = `https://openapi.its.go.kr:9443/eventInfo?apiKey=${ITS_KEY}&type=all&eventType=all&minX=${b.getWest().toFixed(4)}&maxX=${b.getEast().toFixed(4)}&minY=${b.getSouth().toFixed(4)}&maxY=${b.getNorth().toFixed(4)}&getType=json`;
+    const j = await fetch(u).then(r => r.json()); const d = (j.body && j.body.items) || [];
+    incDrawNat(d.filter(x => x.coordX && x.coordY).map((x,i) => ({ id:'n'+i+'_'+x.coordX+'_'+x.coordY, src:'nat', lat:+x.coordY, lng:+x.coordX,
+      type:x.eventDetailType || x.eventType || '돌발', place:(x.roadName ? `[${x.type}] ${x.roadName}` : x.type) + (x.roadDrcType ? ` (${x.roadDrcType} 방향)` : ''),
+      msg:unesc(x.message), time:x.startDate ? x.startDate.replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2}).*/, '$1-$2-$3 $4:$5') : '', status:'', block:x.lanesBlocked || '' })));
+  } catch(e){ toast('고속도로·국도 돌발상황을 받지 못했어요.'); }
+}
+function incDrawNat(list){ inc.nat = list; incDraw(); }
+function incDraw(){
+  if (!inc.layer) return; inc.layer.clearLayers();
+  incAll().forEach(x => {
+    const m = L.marker([x.lat, x.lng], { zIndexOffset:900, icon:L.divIcon({ className:'', html:`<div class="inc-ico" style="background:${incColor(x.type)}">!</div>`, iconSize:[22,22], iconAnchor:[11,11] }) }).addTo(inc.layer);
+    m.on('click', () => incOpenCard(x, m));
+    m.on('mouseover', e => { if (!isTouch(e)) incOpenCard(x, m); });
+  });
+  incPaintBtn();
+}
+function nearestCctv(x){
+  if (x.cctv && byId(x.cctv)) return byId(x.cctv);
+  let best = null, bd = Infinity;
+  all.concat([...nat.values()].filter(c => c.lat)).forEach(c => { const d = Math.hypot((c.lot-x.lng)*91000, (c.lat-x.lat)*111000); if (d < bd) { bd = d; best = c; } });
+  return bd < 3000 ? Object.assign(best, { _dist:bd }) : null;
+}
+function incOpenCard(x, m){
+  incCloseCard(); closePreview();
+  const c = nearestCctv(x), dist = x.cctvDist || (c && c._dist);
+  const el = document.createElement('div'); el.className = 'inc-card';
+  el.innerHTML = `<div class="t"><span class="badge" style="background:${incColor(x.type)}">${x.type}</span><span class="pl">${x.place}</span><button class="x" title="닫기">✕</button></div>
+    ${x.msg ? `<div class="msg">${x.msg.replace(/</g,'&lt;')}</div>` : ''}
+    <div class="meta">${[x.time && '발생 ' + x.time, x.status, x.block, x.src === 'busan' ? '부산시 교통정보' : '국가교통정보센터'].filter(Boolean).join(' · ')}</div>
+    <div class="bt">${c ? `<button class="primary" data-a="cctv">가까운 CCTV 보기 · ${c.instlPos}${dist ? ` (${Math.round(dist)}m)` : ''}</button>` : '<span class="meta">근처 3km 안에 CCTV가 없어요</span>'}${naverBtn({ lat:x.lat, lot:x.lng })}</div>`;
+  document.body.appendChild(el); inc.card = el;
+  const r = $('#map').getBoundingClientRect(), pt = map.latLngToContainerPoint(m.getLatLng());
+  let left = r.left + pt.x - 140, top = r.top + pt.y - el.offsetHeight - 16; if (top < 8) top = r.top + pt.y + 16;
+  el.style.left = Math.max(8, Math.min(innerWidth - 288, left)) + 'px'; el.style.top = Math.max(8, Math.min(innerHeight - el.offsetHeight - 8, top)) + 'px';
+  el.addEventListener('click', e => { e.stopPropagation();
+    if (e.target.classList.contains('x')) incCloseCard();
+    if (e.target.closest('[data-a=cctv]')) { incCloseCard(); openLoc(c); } });
+  el.addEventListener('mouseleave', () => { if (!hoverNone) inc.cardTimer = setTimeout(incCloseCard, 400); });
+  el.addEventListener('mouseenter', () => clearTimeout(inc.cardTimer));
+  m.once('mouseout', e => { if (!isTouch(e)) inc.cardTimer = setTimeout(incCloseCard, 400); });
+}
+function incCloseCard(){ clearTimeout(inc.cardTimer); if (inc.card) { inc.card.remove(); inc.card = null; } }
 
 init();
 </script>
