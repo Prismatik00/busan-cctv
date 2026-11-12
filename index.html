@@ -61,7 +61,7 @@
   #dlg p { margin:0 0 10px; font-size:14px; }
   #dlg #dlgNote { font-size:12px; color:#ffb35c; min-height:16px; margin:8px 0 0; }
   #dlg input { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:15px; }
-  #dlgLink { margin-top:8px; padding:5px 10px; }
+  #dlgLink { margin-right:auto; padding:6px 10px; font-size:13px; }
   #dlg .btns { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
   #exportBox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2000; }
   #exportBox.show { display:flex; }
@@ -306,8 +306,7 @@
   <p id="dlgTitle"></p>
   <input id="dlgInput" type="text" maxlength="30">
   <p id="dlgNote"></p>
-  <a id="dlgLink" class="nv" target="_blank" rel="noopener" style="display:none"></a>
-  <div class="btns"><button class="primary" id="dlgOk">확인</button><button id="dlgAlt" style="display:none"></button><button id="dlgCancel">취소</button></div>
+  <div class="btns"><a id="dlgLink" class="nv" target="_blank" rel="noopener" style="display:none"></a><button class="primary" id="dlgOk">확인</button><button id="dlgAlt" style="display:none"></button><button id="dlgCancel">취소</button></div>
 </div></div>
 <div id="exportBox"><div>
   <p style="margin:0 0 8px;font-size:14px">지금 화면 설정이에요. 복사해서 Claude에게 붙여 넣으면 같은 화면으로 아침 캡처를 예약할 수 있어요.</p>
@@ -378,7 +377,7 @@ async function setItsKey(k){
 }
 async function askItsKey(){
   const k = await dialog({ title:'국가교통정보센터 인증키를 넣어 주세요. 이 기기에만 저장돼요.', value:ITS_KEY, okText:'저장', maxLength:100,
-    link:{ href:'https://www.its.go.kr/opendata/opendataList?service=cctv', text:'인증키 받으러 가기 (국가교통정보센터 오픈데이터) ↗' },
+    link:{ href:'https://www.its.go.kr/opendata/opendataList?service=cctv', text:'인증키 받으러 가기 ↗' },
     check: v => v && !/^[0-9a-f]{32}$/i.test(v) ? '보통 영문·숫자 32자예요.' : '' });
   if (!k) return;
   toast('인증키 확인 중…');
