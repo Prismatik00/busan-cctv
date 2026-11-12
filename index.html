@@ -1554,8 +1554,9 @@ async function incLoadNat(force){
   if (!ITS_KEY) return;
   if (!force && inc.nat.length) { incDraw(); return; }
   try {
-    const b = map.getBounds().pad(0.5);
-    const u = `https://openapi.its.go.kr:9443/eventInfo?apiKey=${ITS_KEY}&type=all&eventType=all&minX=${b.getWest().toFixed(4)}&maxX=${b.getEast().toFixed(4)}&minY=${b.getSouth().toFixed(4)}&maxY=${b.getNorth().toFixed(4)}&getType=json`;
+    // 지금 보는 곳 기준 최소 가로세로 약 100km 범위 (한 번 호출로 넓게)
+    const b = map.getBounds(), c = b.getCenter(), hw = Math.max(0.6, (b.getEast()-b.getWest())/2*1.5), hh = Math.max(0.45, (b.getNorth()-b.getSouth())/2*1.5);
+    const u = `https://openapi.its.go.kr:9443/eventInfo?apiKey=${ITS_KEY}&type=all&eventType=all&minX=${(c.lng-hw).toFixed(4)}&maxX=${(c.lng+hw).toFixed(4)}&minY=${(c.lat-hh).toFixed(4)}&maxY=${(c.lat+hh).toFixed(4)}&getType=json`;
     const j = await fetch(u).then(r => r.json()); const d = (j.body && j.body.items) || [];
     incDrawNat(d.filter(x => x.coordX && x.coordY).map((x,i) => ({ id:'n'+i+'_'+x.coordX+'_'+x.coordY, src:'nat', lat:+x.coordY, lng:+x.coordX,
       type:x.eventDetailType || x.eventType || '돌발', place:(x.roadName ? `[${x.type}] ${x.roadName}` : x.type) + (x.roadDrcType ? ` (${x.roadDrcType} 방향)` : ''),
