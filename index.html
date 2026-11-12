@@ -61,6 +61,7 @@
   #dlg p { margin:0 0 10px; font-size:14px; }
   #dlg #dlgNote { font-size:12px; color:#ffb35c; min-height:16px; margin:8px 0 0; }
   #dlg input { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:15px; }
+  #dlgLink { margin-top:8px; padding:5px 10px; }
   #dlg .btns { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
   #exportBox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:2000; }
   #exportBox.show { display:flex; }
@@ -301,6 +302,7 @@
   <p id="dlgTitle"></p>
   <input id="dlgInput" type="text" maxlength="30">
   <p id="dlgNote"></p>
+  <a id="dlgLink" class="nv" target="_blank" rel="noopener" style="display:none"></a>
   <div class="btns"><button class="primary" id="dlgOk">확인</button><button id="dlgAlt" style="display:none"></button><button id="dlgCancel">취소</button></div>
 </div></div>
 <div id="exportBox"><div>
@@ -372,6 +374,7 @@ async function setItsKey(k){
 }
 async function askItsKey(){
   const k = await dialog({ title:'국가교통정보센터 인증키를 넣어 주세요. 이 기기에만 저장돼요.', value:ITS_KEY, okText:'저장', maxLength:100,
+    link:{ href:'https://www.its.go.kr/opendata/opendataList?service=cctv', text:'인증키 받으러 가기 (국가교통정보센터 오픈데이터) ↗' },
     check: v => v && !/^[0-9a-f]{32}$/i.test(v) ? '보통 영문·숫자 32자예요.' : '' });
   if (!k) return;
   toast('인증키 확인 중…');
@@ -1066,8 +1069,9 @@ function applySettings(s){
   renderGrid(); renderList();
 }
 // 간단한 입력/확인 창 (브라우저 기본 팝업 대신)
-function dialog({ title, value=null, okText='확인', check=null, maxLength=30, altText=null }){
+function dialog({ title, value=null, okText='확인', check=null, maxLength=30, altText=null, link=null }){
   return new Promise(res => {
+    const lk = $('#dlgLink'); lk.style.display = link ? 'inline-flex' : 'none'; if (link) { lk.href = link.href; lk.textContent = link.text; }
     $('#dlgTitle').textContent = title; $('#dlgOk').textContent = okText; $('#dlgNote').textContent = '';
     const alt = $('#dlgAlt'); alt.style.display = altText ? '' : 'none'; alt.textContent = altText || ''; alt.onclick = () => done('alt');
     const inp = $('#dlgInput'); inp.maxLength = maxLength; inp.style.display = value === null ? 'none' : ''; inp.value = value || '';
