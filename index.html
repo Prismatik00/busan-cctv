@@ -141,6 +141,10 @@
   .route-num { background:#ffd43b; color:#222; border:none; box-shadow:none; font:700 10px/1 sans-serif; padding:2px 4px; border-radius:8px; }
   .route-num::before { display:none; }
   .route-pin { width:24px; height:24px; border-radius:50%; color:#fff; font:700 11px/24px sans-serif; text-align:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.5); }
+  /* 지도 왼쪽 위 버튼: 왼쪽부터 경로 → 고속도로·국도 → 돌발상황 가로로 */
+  #map .leaflet-top.leaflet-left { display:flex; flex-direction:row; flex-wrap:wrap; align-items:flex-start; gap:6px; right:60px; padding-left:10px; pointer-events:none; }
+  #map .leaflet-top.leaflet-left .leaflet-control { margin:10px 0 0 0; pointer-events:auto; }
+  #map .route-toggle { order:1; } #map .nat-toggle { order:2; } #map .inc-toggle { order:3; }
   .route-toggle { background:#fff; color:#333; border:2px solid rgba(0,0,0,.2); border-radius:6px; padding:5px 8px; font-size:12px; font-weight:600; cursor:pointer; }
   .route-toggle.on { background:#5f3dc4; color:#fff; border-color:#7048e8; }
   #subtabs { display:flex; gap:4px; padding:0 14px 6px; }
@@ -484,7 +488,7 @@ function initMap(){
   if (!window.L) { $('#map').innerHTML='<p class="hint" style="padding:12px">지도를 불러오지 못했어요. 목록 탭을 이용해 주세요.</p>'; return; }
   let view = DEFAULT_VIEW;
   try { view = JSON.parse(localStorage.getItem(KEY+'-view')) || view; } catch(e){}
-  map = L.map('map', { preferCanvas:true }).setView(view.c, view.z);
+  map = L.map('map', { preferCanvas:true, zoomControl:false }).setView(view.c, view.z);
   map.on('moveend', () => { try { const c=map.getCenter(); localStorage.setItem(KEY+'-view', JSON.stringify({ c:[+c.lat.toFixed(5), +c.lng.toFixed(5)], z:map.getZoom() })); } catch(e){} });
   // 로컬 파일로 열면 리퍼러가 없어 tile.openstreetmap.org는 차단됨 → 리퍼러 없이도 되는 서버 사용
   const street = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
@@ -524,6 +528,7 @@ function initMap(){
   routeBtn.onAdd = () => { const b = L.DomUtil.create('button','route-toggle'); b.textContent = '🛣 경로로 고르기';
     L.DomEvent.disableClickPropagation(b); b.onclick = () => route.open ? routeClose() : routeOpen(); return b; };
   routeBtn.addTo(map);
+  L.control.zoom({ position:'bottomleft', zoomInTitle:'확대', zoomOutTitle:'축소' }).addTo(map); // 확대·축소는 왼쪽 아래
   incInit(); // 돌발상황
   const paintNatBtn = () => { const b = document.querySelector('.nat-toggle'); if (!b) return;
     b.classList.toggle('on', natOn); b.innerHTML = `<span style="color:#f08c00">●</span><span style="color:#2f9e44">●</span> 고속도로·국도 ${natOn ? '켬' : '끔'}`; };
