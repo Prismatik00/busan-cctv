@@ -187,6 +187,16 @@
   .tile { background:#000; border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative;
     display:flex; flex-direction:column; min-height:0; }
   /* 부산 CCTV는 대부분 16:9 화면을 4:3·3:2(320x240, 720x480 등)로 눌러 보내므로 16:9로 펼쳐서 보여줌 */
+  .tile .vw { position:relative; flex:none; }
+  .tile svg.mask { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .tile.painting svg.mask { pointer-events:auto; cursor:crosshair; }
+  .tile .bar button[data-act=paint].set { border-color:#ffd43b; }
+  .paint-bar { position:absolute; left:0; right:0; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px; background:rgba(15,17,21,.85); font-size:12px; }
+  .paint-bar .tip { flex:1; min-width:150px; color:#ffd43b; }
+  .paint-bar label { display:flex; align-items:center; gap:4px; color:#ccc; }
+  .paint-bar input[type=range] { width:90px; }
+  .paint-bar button { padding:4px 10px; font-size:12px; }
+  .paint-dot { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%; background:#ffd43b; border:2px solid #222; pointer-events:none; z-index:4; }
   .tile video { width:100%; aspect-ratio:16/9; flex:none; height:auto; display:block; background:#000; object-fit:fill; }
   .tile .bar { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--panel); font-size:13px; }
   .tile .bar span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -334,6 +344,19 @@ function load(){
 }
 // CCTV별 방향 표시: 없음(점) → ↑ ↗ → ↘ ↓ ↙ ← ↖ → 다시 점. 지금 화면 것만 기억, 설정 저장 시 묶음마다 따로 저장
 let dirs = {}; try { dirs = JSON.parse(localStorage.getItem(KEY+'-dirs')) || {}; } catch(e){}
+// CCTV별 "보고 싶은 차로" 영역: { p:[[x,y]…] (영상 기준 0~1), a:어둡기 0.2~0.9 }. 영역 밖은 어둡게. 목록(묶음)마다 따로 저장
+let masks = {}; try { masks = JSON.parse(localStorage.getItem(KEY+'-masks')) || {}; } catch(e){}
+const MASK_A = 0.6;
+const maskOf = m => !m ? null : Array.isArray(m) ? { p:m, a:MASK_A } : m;
+function maskSvg(m){
+  m = maskOf(m); if (!m || !m.p || m.p.length < 3) return '';
+  const pts = m.p, poly = pts.map(([x,y]) => `${x},${y}`).join(' ');
+  return `<path d="M0 0H1V1H0Z M${pts.map(([x,y]) => `${x} ${y}`).join(' L')} Z" fill="rgba(0,0,0,${m.a})" fill-rule="evenodd"/>
+    <polygon points="${poly}" fill="none" stroke="#ffd43b" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity=".8"/>`;
+}
+function paintMask(id){ const p = players.get(id); if (!p) return; const s = p.el.querySelector('svg.mask'); if (s) s.innerHTML = maskSvg(masks[id]);
+  const b = p.el.querySelector('[data-act=paint]'); if (b) b.classList.toggle('set', !!masks[id]); }
+function paintMasks(){ players.forEach((p,id) => paintMask(id)); }
 const DIR_ARROW = ['↑','↗','→','↘','↓','↙','←','↖'];
 function dirHtml(id){ const d = dirs[id]; return d === undefined
   ? `<button class="dir" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="dot"></span></button>`
@@ -353,6 +376,8 @@ function save(){
     localStorage.setItem(KEY, JSON.stringify(selected));
     Object.keys(dirs).forEach(id => { if (!selected.includes(id)) delete dirs[id]; }); // 뺀 CCTV의 방향은 지움
     localStorage.setItem(KEY+'-dirs', JSON.stringify(dirs));
+    Object.keys(masks).forEach(id => { if (!selected.includes(id)) delete masks[id]; }); // 뺀 CCTV의 칠하기도 지움
+    localStorage.setItem(KEY+'-masks', JSON.stringify(masks));
     // 고속도로·국도 CCTV는 이름·위치를 같이 저장해 두었다가 다음에 바로 보여줌
     const meta = {}; selected.filter(isNat).forEach(id => { const c = nat.get(id); if (c) meta[id] = { instlPos:c.instlPos, instlAddr:c.instlAddr, lat:c.lat, lot:c.lot, src:c.src }; });
     localStorage.setItem(KEY+'-nat', JSON.stringify(meta));
@@ -886,9 +911,9 @@ function renderGrid(){
 
 function makeTile(c){
   const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
-  el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
+  el.innerHTML = `<div class="vw"><video muted playsinline autoplay></video><svg class="mask" viewBox="0 0 1 1" preserveAspectRatio="none">${maskSvg(masks[c.cctvId])}</svg></div><div class="msg">연결 중…</div>
     <div class="bar">${dirHtml(c.cctvId)}<span class="nm" title="눌러서 지도에서 위치 보기${c.instlAddr ? ' · '+c.instlAddr : ''}">${c.instlPos}</span>
-    ${naverBtn(c)}<button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
+    <button data-act="paint" class="${masks[c.cctvId]?'set':''}" title="보고 싶은 차로 칠하기 (나머지는 어둡게)">🖌</button>${naverBtn(c)}<button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
   const start = async () => {
@@ -920,6 +945,7 @@ function makeTile(c){
   el.querySelector('.bar').addEventListener('click', e => {
     if (e.target.classList.contains('nm')) { focusOnMap(c); return; } // 이름 누르면 지도에서 위치 보기
     const db = e.target.closest('.dir'); if (db) { cycleDir(c.cctvId, db); return; }
+    if (e.target.closest('[data-act=paint]')) { startPaint(el, c.cctvId); return; }
     const act = e.target.dataset.act;
     if (act==='reload') start();
     if (act==='del') { closeBig(); selected = selected.filter(x=>x!==c.cctvId); save(); renderGrid(); renderList(); }
@@ -946,6 +972,7 @@ function openBig(el){
   $('#navPrev').style.visibility = $('#navNext').style.visibility = multi ? 'visible' : 'hidden';
 }
 function closeBig(){
+  if (paint) endPaint(false);
   document.querySelectorAll('.tile.big').forEach(t=>{
     if (t.classList.contains('temp')) { t._hls && t._hls.destroy(); t.remove(); return; } // 지도 미리보기에서 연 임시 화면
     t.classList.remove('big'); t.draggable=true;
@@ -977,7 +1004,7 @@ function openPreviewBig(c){
   $('#backdrop').classList.add('show');
 }
 function stepBig(d){
-  const cur = document.querySelector('.tile.big'); if (!cur || cur.classList.contains('temp')) return;
+  const cur = document.querySelector('.tile.big'); if (!cur || cur.classList.contains('temp') || paint) return;
   const tiles = [...document.querySelectorAll('#grid .tile')]; if (tiles.length < 2) return;
   const next = tiles[(tiles.indexOf(cur) + d + tiles.length) % tiles.length]; // 끝에서 처음으로 순환
   openBig(next);
@@ -1005,6 +1032,11 @@ function drawFrame(ctx, p, x, y, w, h){
   ctx.fillStyle='#000'; ctx.fillRect(x,y,w,h);
   const v=p.video;
   if (v.videoWidth) ctx.drawImage(v, x, y, w, h);
+  const mk = maskOf(masks[p.c.cctvId]);
+  if (mk && mk.p.length >= 3) { // 칠하기: 영역 밖 어둡게
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.moveTo(x + mk.p[0][0]*w, y + mk.p[0][1]*h);
+    mk.p.slice(1).forEach(([px,py]) => ctx.lineTo(x + px*w, y + py*h)); ctx.closePath();
+    ctx.fillStyle = `rgba(0,0,0,${mk.a})`; ctx.fill('evenodd'); ctx.restore(); }
   else { ctx.fillStyle='#888'; ctx.font=`${14*SCALE/2+6}px sans-serif`; ctx.fillText('영상 없음', x+12, y+h/2); }
   const dv = dirs[p.c.cctvId], label = `${dv !== undefined ? DIR_ARROW[dv]+' ' : ''}${p.c.instlPos}  ·  ${stampText()}`;
   ctx.font = `bold ${Math.round(w/32)}px sans-serif`;
@@ -1058,7 +1090,7 @@ function renderPresets(cur){
   $('#preset').value = cur && presets[cur] ? cur : '';
 }
 function currentSettings(){
-  const s = { selected:selected.slice(), cols:$('#cols').value, wide:!!document.querySelector('aside').style.width, dirs:{ ...dirs } };
+  const s = { selected:selected.slice(), cols:$('#cols').value, wide:!!document.querySelector('aside').style.width, dirs:{ ...dirs }, masks:JSON.parse(JSON.stringify(masks)) };
   if (map) { const c = map.getCenter(); s.view = { c:[+c.lat.toFixed(5), +c.lng.toFixed(5)], z:map.getZoom() }; }
   return s;
 }
@@ -1066,7 +1098,8 @@ function applySettings(s){
   closeBig();
   selected = (s.selected||[]).filter(id => !all.length || isNat(id) || byId(id));
   dirs = { ...(s.dirs || {}) }; // 같은 CCTV라도 묶음마다 방향이 다를 수 있음
-  save(); paintDirs();
+  masks = JSON.parse(JSON.stringify(s.masks || {})); // 칠하기도 묶음마다 따로
+  save(); paintDirs(); paintMasks();
   $('#cols').value = s.cols || DEFAULT_COLS; setCols();
   setWide(!!s.wide);
   if (map && s.view) map.setView(s.view.c, s.view.z);
@@ -1177,12 +1210,16 @@ function encodeSettings(name, s, key){
   const ids = (s.selected||[]).map(id => isNat(id) ? id : String(+id.replace(/\D/g,''))).join('.');
   const v = s.view ? `${s.view.c[0]},${s.view.c[1]},${s.view.z}` : '';
   const dd = (s.selected||[]).map(id => s.dirs && s.dirs[id] !== undefined ? s.dirs[id] : '-').join('');
-  return [name, s.cols||'', v, ids, s.wide?'1':'', key||'', /\d/.test(dd) ? dd : ''].map(encodeURIComponent).join('|');
+  const mm = (s.selected||[]).map((id,i) => { const m = s.masks && maskOf(s.masks[id]); if (!m) return '';
+    return i + ':' + Math.round(m.a*10) + ':' + m.p.map(([x,y]) => String(Math.round(x*99)).padStart(2,'0') + String(Math.round(y*99)).padStart(2,'0')).join(''); }).filter(Boolean).join('~');
+  return [name, s.cols||'', v, ids, s.wide?'1':'', key||'', /\d/.test(dd) ? dd : '', mm].map(encodeURIComponent).join('|');
 }
 function decodeSettings(str){
-  const [name, cols, v, ids, wide, key, dd] = str.split('|').map(decodeURIComponent);
+  const [name, cols, v, ids, wide, key, dd, mm] = str.split('|').map(decodeURIComponent);
   const s = { selected:(ids||'').split('.').filter(Boolean).map(n => isNat(n) ? n : 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1', dirs:{} };
   (dd||'').split('').forEach((ch,i) => { if (/[0-7]/.test(ch) && s.selected[i]) s.dirs[s.selected[i]] = +ch; });
+  s.masks = {}; (mm||'').split('~').forEach(t => { const m = t.match(/^(\d+):(\d):(\d+)$/); if (!m || !s.selected[+m[1]]) return;
+    const pts = (m[3].match(/\d{4}/g) || []).map(q => [+q.slice(0,2)/99, +q.slice(2)/99]); if (pts.length >= 3) s.masks[s.selected[+m[1]]] = { p:pts, a:+m[2]/10 }; });
   if (v) { const [a,b,z] = v.split(',').map(Number); if (!isNaN(a)&&!isNaN(b)&&!isNaN(z)) s.view = { c:[a,b], z }; }
   return { name: name || '받은 설정', s, key: key || '' };
 }
@@ -1607,6 +1644,50 @@ function incOpenCard(x, m){
   m.once('mouseout', e => { if (!isTouch(e)) inc.cardTimer = setTimeout(incCloseCard, 400); });
 }
 function incCloseCard(){ clearTimeout(inc.cardTimer); if (inc.card) { inc.card.remove(); inc.card = null; } }
+
+// ---------- 칠하기: 크게 보기에서 원하는 차로의 모서리를 차례로 눌러 영역 만들기 → 나머지는 어둡게 (어둡기 조절) ----------
+let paint = null;
+function startPaint(el, id){
+  if (!el.classList.contains('big')) openBig(el);
+  if (paint) endPaint(false);
+  el.classList.add('painting'); el.draggable = false;
+  const vw = el.querySelector('.vw'), svg = vw.querySelector('svg.mask'), old = maskOf(masks[id]);
+  paint = { el, id, vw, svg, pts: old ? old.p.map(q => q.slice()) : [], a: old ? old.a : MASK_A, old: masks[id] || null };
+  const bar = document.createElement('div'); bar.className = 'paint-bar';
+  bar.innerHTML = `<span class="tip"></span>
+    <label title="영역 밖을 얼마나 어둡게 할지">어둡기 <input type="range" min="20" max="90" step="5" value="${Math.round(paint.a*100)}"><b>${Math.round(paint.a*100)}%</b></label>
+    <button class="primary" data-p="ok">완료</button><button data-p="undo">한 점 취소</button><button data-p="reset">다시 찍기</button><button data-p="clear">칠하기 지우기</button><button data-p="cancel">취소</button>`;
+  vw.appendChild(bar);
+  const rng = bar.querySelector('input'); rng.addEventListener('input', () => { paint.a = +rng.value/100; bar.querySelector('label b').textContent = rng.value+'%'; drawPaint(); });
+  bar.addEventListener('click', e => { e.stopPropagation(); const a = e.target.dataset.p;
+    if (a === 'ok') endPaint(true); if (a === 'cancel') endPaint(false);
+    if (a === 'undo') { paint.pts.pop(); drawPaint(); }
+    if (a === 'reset') { paint.pts = []; drawPaint(); }
+    if (a === 'clear') { delete masks[id]; save(); endPaint(false, true); toast('칠하기를 지웠어요'); } });
+  svg.onclick = e => { e.stopPropagation();
+    const r = svg.getBoundingClientRect(); const x = Math.min(1, Math.max(0, (e.clientX - r.left)/r.width)), y = Math.min(1, Math.max(0, (e.clientY - r.top)/r.height));
+    paint.pts.push([+x.toFixed(4), +y.toFixed(4)]); drawPaint(); };
+  ['navPrev','navNext'].forEach(n => $('#'+n).style.visibility = 'hidden');
+  drawPaint();
+}
+function drawPaint(){
+  const { vw, svg, pts } = paint;
+  vw.querySelectorAll('.paint-dot').forEach(d => d.remove());
+  pts.forEach(([x,y]) => { const d = document.createElement('div'); d.className = 'paint-dot'; d.style.left = x*100+'%'; d.style.top = y*100+'%'; vw.appendChild(d); });
+  svg.innerHTML = pts.length >= 3 ? maskSvg({ p:pts, a:paint.a })
+    : pts.length === 2 ? `<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#ffd43b" stroke-width="2" vector-effect="non-scaling-stroke"/>` : '';
+  vw.querySelector('.tip').textContent = pts.length < 3 ? `보고 싶은 차로의 모서리를 차례로 누르세요 (${pts.length}/3곳 이상)` : `${pts.length}곳 · 더 누르거나 "완료"`;
+}
+function endPaint(ok, cleared){
+  if (!paint) return; const { el, id, vw, pts, old } = paint;
+  if (ok) { if (pts.length >= 3) { masks[id] = { p:pts, a:paint.a }; save(); toast('칠하기 저장됨 · 목록에 남기려면 "목록 저장"'); }
+            else if (pts.length) { toast('3곳 이상 눌러야 해요'); return; } else { delete masks[id]; save(); } }
+  else if (!cleared) { if (old) masks[id] = old; }
+  vw.querySelector('.paint-bar')?.remove(); vw.querySelectorAll('.paint-dot').forEach(d => d.remove());
+  el.classList.remove('painting'); vw.querySelector('svg.mask').onclick = null;
+  paint = null; paintMask(id);
+  if (el.classList.contains('big') && document.querySelectorAll('#grid .tile').length > 1) ['navPrev','navNext'].forEach(n => $('#'+n).style.visibility = 'visible');
+}
 
 init();
 </script>
