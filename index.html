@@ -1211,15 +1211,15 @@ function encodeSettings(name, s, key){
   const v = s.view ? `${s.view.c[0]},${s.view.c[1]},${s.view.z}` : '';
   const dd = (s.selected||[]).map(id => s.dirs && s.dirs[id] !== undefined ? s.dirs[id] : '-').join('');
   const mm = (s.selected||[]).map((id,i) => { const m = s.masks && maskOf(s.masks[id]); if (!m) return '';
-    return i + ':' + Math.round(m.a*10) + ':' + m.p.map(([x,y]) => String(Math.round(x*99)).padStart(2,'0') + String(Math.round(y*99)).padStart(2,'0')).join(''); }).filter(Boolean).join('~');
+    return i + ':' + String(Math.round(m.a*100)).padStart(2,'0') + ':' + m.p.map(([x,y]) => String(Math.round(x*99)).padStart(2,'0') + String(Math.round(y*99)).padStart(2,'0')).join(''); }).filter(Boolean).join('~');
   return [name, s.cols||'', v, ids, s.wide?'1':'', key||'', /\d/.test(dd) ? dd : '', mm].map(encodeURIComponent).join('|');
 }
 function decodeSettings(str){
   const [name, cols, v, ids, wide, key, dd, mm] = str.split('|').map(decodeURIComponent);
   const s = { selected:(ids||'').split('.').filter(Boolean).map(n => isNat(n) ? n : 'CTV' + n.padStart(7,'0')), cols:cols||DEFAULT_COLS, wide:wide==='1', dirs:{} };
   (dd||'').split('').forEach((ch,i) => { if (/[0-7]/.test(ch) && s.selected[i]) s.dirs[s.selected[i]] = +ch; });
-  s.masks = {}; (mm||'').split('~').forEach(t => { const m = t.match(/^(\d+):(\d):(\d+)$/); if (!m || !s.selected[+m[1]]) return;
-    const pts = (m[3].match(/\d{4}/g) || []).map(q => [+q.slice(0,2)/99, +q.slice(2)/99]); if (pts.length >= 3) s.masks[s.selected[+m[1]]] = { p:pts, a:+m[2]/10 }; });
+  s.masks = {}; (mm||'').split('~').forEach(t => { const m = t.match(/^(\d+):(\d{1,2}):(\d+)$/); if (!m || !s.selected[+m[1]]) return;
+    const pts = (m[3].match(/\d{4}/g) || []).map(q => [+q.slice(0,2)/99, +q.slice(2)/99]); if (pts.length >= 3) s.masks[s.selected[+m[1]]] = { p:pts, a: m[2].length === 1 ? +m[2]/10 : +m[2]/100 }; });
   if (v) { const [a,b,z] = v.split(',').map(Number); if (!isNaN(a)&&!isNaN(b)&&!isNaN(z)) s.view = { c:[a,b], z }; }
   return { name: name || '받은 설정', s, key: key || '' };
 }
