@@ -208,10 +208,15 @@
   .tile .bar button { flex:none; padding:4px 8px; font-size:12px; }
   .tile .bar span { min-width:0; }
   .tile .bar span.nm { cursor:pointer; }
-  .tile .bar button.dir { flex:none; width:24px; height:24px; padding:0; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; }
+  /* 카드 아래 버튼: 모두 같은 크기·모양 (브라우저와 상관없이) */
+  .tile .bar .ib, .tile .bar a.nv { flex:none; box-sizing:border-box; width:28px; height:26px; padding:0; margin:0;
+    display:inline-flex; align-items:center; justify-content:center; border-radius:8px; border:1px solid var(--line);
+    background:#0f1115; color:var(--text); font:700 12px/1 -apple-system,"Pretendard","Malgun Gothic",sans-serif; -webkit-appearance:none; appearance:none; }
+  .tile .bar .ib svg.ic { width:15px; height:15px; display:block; pointer-events:none; }
+  .tile .bar button.dir { border-radius:50%; width:26px; }
   .tile .bar button.dir span { flex:none; min-width:0; }
   .tile .bar button.dir .dot { width:5px; height:5px; border-radius:50%; background:var(--muted); }
-  .tile .bar button.dir .arr { display:inline-block; font-size:14px; font-weight:700; line-height:1; transition:transform .2s ease; }
+  .tile .bar button.dir .arr { display:inline-flex; transition:transform .2s ease; }
   .tile .bar button.dir.set { border-color:#3d7bfd; color:#9ec1ff; }
   .tile .bar span.nm:hover { text-decoration:underline; color:#9ec1ff; }
   .focus-ring { animation:focusPulse 1.2s ease-out 3; }
@@ -362,9 +367,17 @@ function paintMask(id){ const p = players.get(id); if (!p) return; const s = p.e
   const b = p.el.querySelector('[data-act=paint]'); if (b) b.classList.toggle('set', !!masks[id]); }
 function paintMasks(){ players.forEach((p,id) => paintMask(id)); }
 const DIR_ARROW = ['↑','↗','→','↘','↓','↙','←','↖'];
+// 아이콘: 이모지·글자 기호 대신 직접 그린 선 아이콘(브라우저·폰 글꼴과 상관없이 같은 모양)
+const ICON = {
+  arrow:'<path d="M12 19V5M6 11l6-6 6 6"/>',
+  brush:'<path d="M14.5 4.5l5 5L11 18l-5-5z"/><path d="M6 13c-2 0-3 1.5-3 3.5V20h3.5c2 0 3.5-1 3.5-3"/>',
+  reload:'<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M20 4v5h-5"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>'
+};
+const svgIcon = (name, extra='') => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${ICON[name]}</svg>`;
 function dirHtml(id){ const d = dirs[id]; return d === undefined
-  ? `<button class="dir" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="dot"></span></button>`
-  : `<button class="dir set" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="arr" style="transform:rotate(${d*45}deg)">↑</span></button>`; }
+  ? `<button class="ib dir" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="dot"></span></button>`
+  : `<button class="ib dir set" data-act="dir" title="방향 표시 (누를 때마다 시계방향으로 돌아가요)"><span class="arr" style="transform:rotate(${d*45}deg)">${svgIcon('arrow')}</span></button>`; }
 function cycleDir(id, btn){
   const d = dirs[id];
   if (d === undefined) dirs[id] = 0; else if (d >= 7) delete dirs[id]; else dirs[id] = d + 1;
@@ -917,7 +930,7 @@ function makeTile(c){
   const el = document.createElement('div'); el.className='tile'; el.draggable=true; el.dataset.id=c.cctvId;
   el.innerHTML = `<div class="vw"><video muted playsinline autoplay></video><svg class="mask" viewBox="0 0 1 1" preserveAspectRatio="none">${maskSvg(masks[c.cctvId])}</svg></div><div class="msg">연결 중…</div>
     <div class="bar">${dirHtml(c.cctvId)}<span class="nm" title="눌러서 지도에서 위치 보기${c.instlAddr ? ' · '+c.instlAddr : ''}">${c.instlPos}</span>
-    <button data-act="paint" class="${masks[c.cctvId]?'set':''}" title="보고 싶은 차로 칠하기 (나머지는 어둡게)">🖌</button>${naverBtn(c)}<button data-act="reload" title="다시 연결">↻</button><button data-act="del" title="빼기">✕</button></div>`;
+    <button data-act="paint" class="ib ${masks[c.cctvId]?'set':''}" title="보고 싶은 차로 칠하기 (나머지는 어둡게)">${svgIcon('brush')}</button>${naverBtn(c)}<button data-act="reload" class="ib" title="다시 연결">${svgIcon('reload')}</button><button data-act="del" class="ib" title="빼기">${svgIcon('close')}</button></div>`;
   const video = el.querySelector('video'), msg = el.querySelector('.msg');
   const p = { el, video, hls:null, c };
   const start = async () => {
@@ -950,7 +963,7 @@ function makeTile(c){
     if (e.target.classList.contains('nm')) { focusOnMap(c); return; } // 이름 누르면 지도에서 위치 보기
     const db = e.target.closest('.dir'); if (db) { cycleDir(c.cctvId, db); return; }
     if (e.target.closest('[data-act=paint]')) { startPaint(el, c.cctvId); return; }
-    const act = e.target.dataset.act;
+    const act = e.target.closest('[data-act]')?.dataset.act;
     if (act==='reload') start();
     if (act==='del') { closeBig(); selected = selected.filter(x=>x!==c.cctvId); save(); renderGrid(); renderList(); }
   });
@@ -990,7 +1003,7 @@ function openPreviewBig(c){
   closeBig();
   const el = document.createElement('div'); el.className = 'tile big temp';
   el.innerHTML = `<video muted playsinline autoplay></video><div class="msg">연결 중…</div>
-    <div class="bar"><span class="nm" title="눌러서 지도에서 위치 보기">${c.instlPos}</span>${naverBtn(c)}<button class="primary" data-act="add">+ 모아보기에 추가</button><button data-act="close" title="닫기">✕</button></div>`;
+    <div class="bar"><span class="nm" title="눌러서 지도에서 위치 보기">${c.instlPos}</span>${naverBtn(c)}<button class="primary" data-act="add">+ 모아보기에 추가</button><button data-act="close" class="ib" title="닫기">${svgIcon('close')}</button></div>`;
   document.body.appendChild(el);
   const v = el.querySelector('video'), msg = el.querySelector('.msg');
   v.addEventListener('playing', () => msg.style.display='none');
@@ -1001,7 +1014,7 @@ function openPreviewBig(c){
   v.play().catch(()=>{});
   el.querySelector('.bar').addEventListener('click', e => {
     if (e.target.classList.contains('nm')) { focusOnMap(c); return; }
-    const a = e.target.dataset.act;
+    const a = e.target.closest('[data-act]')?.dataset.act;
     if (a === 'close') closeBig();
     if (a === 'add') { closeBig(); if (!selected.includes(c.cctvId)) toggle(c.cctvId); const p = players.get(c.cctvId); if (p) openBig(p.el); }
   });
