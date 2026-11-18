@@ -191,7 +191,9 @@
   .tile svg.mask { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   .tile.painting svg.mask { pointer-events:auto; cursor:crosshair; }
   .tile .bar button[data-act=paint].set { border-color:#ffd43b; }
-  .paint-bar { position:absolute; left:0; right:0; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px; background:rgba(15,17,21,.85); font-size:12px; }
+  .paint-bar { position:relative; z-index:5; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px; background:#151821; border-bottom:1px solid var(--line); font-size:12px; flex:none; }
+  /* 칠하는 동안: 도구 줄이 영상 위(바깥)에 붙으므로 그만큼 영상 크기를 줄여 화면 안에 맞춤 */
+  .tile.big.painting { width:min(92vw, calc((92vh - 44px - 96px) * 16 / 9)); }
   .paint-bar .tip { flex:1; min-width:150px; color:#ffd43b; }
   .paint-bar label { display:flex; align-items:center; gap:4px; color:#ccc; }
   .paint-bar input[type=range] { width:90px; }
@@ -1659,7 +1661,7 @@ function startPaint(el, id){
   bar.innerHTML = `<span class="tip"></span>
     <label title="영역 밖을 얼마나 어둡게 할지">어둡기 <input type="range" min="20" max="90" step="5" value="${Math.round(paint.a*100)}"><b>${Math.round(paint.a*100)}%</b></label>
     <button class="primary" data-p="ok">완료</button><button data-p="undo">한 점 취소</button><button data-p="reset">다시 찍기</button><button data-p="clear">칠하기 지우기</button><button data-p="cancel">취소</button>`;
-  vw.appendChild(bar);
+  el.insertBefore(bar, vw); // 영상 위쪽 바깥에 두어 화면을 가리지 않게
   const rng = bar.querySelector('input'); rng.addEventListener('input', () => { paint.a = +rng.value/100; bar.querySelector('label b').textContent = rng.value+'%'; drawPaint(); });
   bar.addEventListener('click', e => { e.stopPropagation(); const a = e.target.dataset.p;
     if (a === 'ok') endPaint(true); if (a === 'cancel') endPaint(false);
@@ -1689,14 +1691,14 @@ function drawPaint(){
     const up = () => d.classList.remove('drag'); d.addEventListener('pointerup', up); d.addEventListener('pointercancel', up);
   });
   paintSvg();
-  vw.querySelector('.tip').textContent = pts.length < 3 ? `보고 싶은 차로의 모서리를 차례로 누르세요 (${pts.length}/3곳 이상)` : `${pts.length}곳 · 점은 끌어서 옮길 수 있어요 · 더 누르거나 "완료"`;
+  paint.el.querySelector('.paint-bar .tip').textContent = pts.length < 3 ? `보고 싶은 차로의 모서리를 차례로 누르세요 (${pts.length}/3곳 이상)` : `${pts.length}곳 · 점은 끌어서 옮길 수 있어요 · 더 누르거나 "완료"`;
 }
 function endPaint(ok, cleared){
   if (!paint) return; const { el, id, vw, pts, old } = paint;
   if (ok) { if (pts.length >= 3) { masks[id] = { p:pts, a:paint.a }; save(); toast('칠하기 저장됨 · 목록에 남기려면 "목록 저장"'); }
             else if (pts.length) { toast('3곳 이상 눌러야 해요'); return; } else { delete masks[id]; save(); } }
   else if (!cleared) { if (old) masks[id] = old; }
-  vw.querySelector('.paint-bar')?.remove(); vw.querySelectorAll('.paint-dot').forEach(d => d.remove());
+  el.querySelector('.paint-bar')?.remove(); vw.querySelectorAll('.paint-dot').forEach(d => d.remove());
   el.classList.remove('painting'); vw.querySelector('svg.mask').onclick = null;
   paint = null; paintMask(id);
   if (el.classList.contains('big') && document.querySelectorAll('#grid .tile').length > 1) ['navPrev','navNext'].forEach(n => $('#'+n).style.visibility = 'visible');
